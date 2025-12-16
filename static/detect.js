@@ -46,7 +46,7 @@ async function upload() {
     document.getElementById("result_img_count").innerText = "";
     document.getElementById("result_count_by_class").innerText = "";
 
-    const res = await fetch("/predict", { method: "POST", body: form });
+    const res = await fetch("/api/detect", { method: "POST", body: form });
     const data = await res.json();
 
     // 顯示影片
@@ -60,7 +60,13 @@ async function upload() {
         document.getElementById("wait").innerText = "";
         document.getElementById("resultImg").src = "data:image/jpeg;base64," + data.image;
         document.getElementById("resultImg").style.display = "block";
-        document.getElementById("result_img_count").innerText = `偵測到 ${data.count} 個物體`;
+        document.getElementById("result_img_count").innerText = `偵測到 ${data.total_count} 個物體`;
+
+        let class_text = "各類別數量: ";
+        for (const [cls, num] of Object.entries(data.count_by_class)) {
+            class_text += `${cls}: ${num} `;
+        }
+        document.getElementById("result_count_by_class").innerText = class_text;
     }
     else {
         alert("格式錯誤或模型處理失敗");
