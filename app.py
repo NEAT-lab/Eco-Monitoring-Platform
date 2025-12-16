@@ -52,6 +52,20 @@ count = 0
 def index():
     return render_template("index.html")
 
+@app.route("/detect")
+def detect():
+    return render_template("detect.html")
+
+@app.route("/cctv")
+def cctv():
+    return render_template("cctv.html")
+
+@app.route("/panorama")
+def panorama():
+    return render_template("panorama.html")
+
+
+
 @app.route("/get_models")
 def get_models():
     return jsonify({"models": available_models})

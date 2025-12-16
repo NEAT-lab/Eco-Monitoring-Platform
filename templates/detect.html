@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-tw">
+
+<head>
+    <link rel="stylesheet" href="../static/style.css">
+</head>
+
+<body>
+    <header>
+        <nav>
+            <ul>
+                <li><a href="/">home</a></li>
+                <li><a href="/detect">detect</a></li>
+                <li><a href="/cctv">cctv</a></li>
+                <li><a href="/panorama">panorama</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <h2>YOLO 圖片 / 影片 偵測</h2>
+    <div class="upload-box">
+        <label for="modelSelect">選擇模型：</label>
+        <select id="modelSelect"></select>
+        <button onclick="setModel()">設定模型</button>
+        <br><br>
+        <input type="file" id="file">
+        <button onclick="upload()">上傳 + 偵測</button>
+    </div>
+
+    <p class="note">圖片支援：.jpg .jpeg .png .bmp .webp</p>
+    <p class="note">影片支援：.mp4 .avi .mov .mkv .webm</p>
+
+    <div id="wait"></div>
+
+    <div class="preview-area">
+        <img id="resultImg" width="400" style="display:none">
+        <video id="resultVideo" controls width="400" style="display:none"></video>
+    </div>
+
+    <div id="result_img_count"></div>
+    <div id="result_count_by_class"></div>
+
+    <script src="../static/detect.js"></script>
+
+</body>
+
+</html>
