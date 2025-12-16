@@ -40,7 +40,11 @@ RESULT_FOLDER = "results"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
 
-model = YOLO("yolov8n.pt")  # 你要換YOLOv5/v10都可
+MODEL_FOLDER = "pt"
+available_models = [f for f in os.listdir(MODEL_FOLDER) if f.endswith(".pt")]
+
+current_model_path = "pt/yolov5su.pt"
+model = YOLO(current_model_path)
 
 count = 0
 
@@ -48,6 +52,21 @@ count = 0
 def index():
     return render_template("index.html")
 
+@app.route("/get_models")
+def get_models():
+    return jsonify({"models": available_models})
+
+@app.route("/set_model", methods=["POST"])
+def set_model():
+    global model, current_model_path
+    data = request.json
+    path = data.get("model_path")
+    if not path or not os.path.exists(path):
+        return jsonify({"status":"error","message":"模型不存在"}), 400
+    
+    current_model_path = path
+    model = YOLO(current_model_path)
+    return jsonify({"status":"ok","model":current_model_path})
 
 @app.route("/predict",methods=["POST"])
 def predict():

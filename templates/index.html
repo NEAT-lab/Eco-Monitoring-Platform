@@ -10,6 +10,10 @@
     <h2>YOLO 圖片 / 影片 偵測</h2>
 
     <div class="upload-box">
+        <label for="modelSelect">選擇模型：</label>
+        <select id="modelSelect"></select>
+        <button onclick="setModel()">設定模型</button>
+        <br><br>
         <input type="file" id="file">
         <button onclick="upload()">上傳 + 偵測</button>
     </div>
@@ -27,6 +31,37 @@
     <div id="result_img_count"></div>
 
     <script>
+        async function setModel() {
+            const modelPath = document.getElementById("modelSelect").value.trim();
+            if (!modelPath) {
+                alert("請輸入模型路徑");
+                return;
+            }
+
+            const res = await fetch("/set_model", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model_path: modelPath })
+            });
+            const data = await res.json();
+            if (data.status == "ok") {
+                alert(`模型設定成功: ${data.model}`);
+            } else {
+                alert(`模型設定失敗: ${data.message}`);
+            }
+        }
+
+        window.onload = async function () {
+            const res = await fetch("/get_models");
+            const data = await res.json();
+            const select = document.getElementById("modelSelect");
+            data.models.forEach(m => {
+                const opt = document.createElement("option");
+                opt.value = `pt/${m}`;  // 完整路徑
+                opt.innerText = m;
+                select.appendChild(opt);
+            });
+        }
         async function upload() {
             const file = document.getElementById("file").files[0];
             if (!file) {
