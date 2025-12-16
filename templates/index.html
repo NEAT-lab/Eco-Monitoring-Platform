@@ -24,7 +24,7 @@
         <video id="resultVideo" controls width="400" style="display:none"></video>
     </div>
 
-    <div id="result"></div>
+    <div id="result_img_count"></div>
 
     <script>
         async function upload() {
@@ -38,6 +38,10 @@
             form.append("file", file);
 
             document.getElementById("wait").innerText = "處理中，請稍候...";
+            document.getElementById("resultImg").style.display = "none";
+            document.getElementById("resultVideo").style.display = "none";
+            document.getElementById("result_img_count").innerText = "";
+
             const res = await fetch("/predict", { method: "POST", body: form });
             const data = await res.json();
 
@@ -46,17 +50,13 @@
                 document.getElementById("wait").innerText = "";
                 document.getElementById("resultVideo").src = data.video_url;
                 document.getElementById("resultVideo").style.display = "block";
-                document.getElementById("resultImg").style.display = "none";
             }
             // 顯示圖片
             else if (data.type == "image") {
                 document.getElementById("wait").innerText = "";
                 document.getElementById("resultImg").src = "data:image/jpeg;base64," + data.image;
                 document.getElementById("resultImg").style.display = "block";
-                document.getElementById("resultVideo").style.display = "none";
-                const result = await fetch("/result");
-                const resultData = await result.json();
-                document.getElementById("result").innerText = `偵測到 ${resultData.count} 個物體`;
+                document.getElementById("result_img_count").innerText = `偵測到 ${data.count} 個物體`;
             }
             else {
                 alert("格式錯誤或模型處理失敗");

@@ -52,7 +52,6 @@ def index():
 @app.route("/predict",methods=["POST"])
 def predict():
     global count
-    a = 0
     count = 0
     file = request.files["file"]
     filename = file.filename.lower()
@@ -63,9 +62,8 @@ def predict():
         img_bytes = np.frombuffer(file.read(), np.uint8)
         img = cv2.imdecode(img_bytes, cv2.IMREAD_COLOR)
 
-        # 2️⃣ YOLO 推論
         results = model(img)[0]
-        # 3️⃣ 畫框
+
         for box in results.boxes:
             count += 1
             x1, y1, x2, y2 = box.xyxy[0].int().tolist()
@@ -77,13 +75,12 @@ def predict():
             cv2.putText(img, label, (x1, y1 - 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-        # 4️⃣ 轉 base64 回傳
         _, buffer = cv2.imencode(".jpg", img)
         img_base64 = base64.b64encode(buffer).decode("utf-8")
 
-        return jsonify({"type": "image", "image": img_base64})
+        return jsonify({"type": "image", "image": img_base64, "count": count})
     
-    if ext in [".mp4",".avi",".mov",".mkv",".webm"]:
+    elif ext in [".mp4",".avi",".mov",".mkv",".webm"]:
         input_path = f"{UPLOAD_FOLDER}/{file.filename}"
         # output_path = f"{RESULT_FOLDER}/result.mp4"
 
@@ -95,22 +92,20 @@ def predict():
         # YOLO 偵測（可直接用model.predict也行）
         model.predict(input_path, save=True, project=RESULT_FOLDER, name="runs", exist_ok=True)
 
-        # 💡 取得 YOLO 存出的影片位置
+        #  取得 YOLO 存出的影片位置
         processed_video = f"results/runs/{new_filename}"
         mp4_processed_video = to_mp4(processed_video)
         if os.path.exists(processed_video):
             os.remove(processed_video)
         
-        
         return jsonify({"type": "video", "video_url": f"/video/{os.path.basename(mp4_processed_video)}"})
 
+    else:
+        return jsonify({"type": "error", "message": "Unsupported file format."})
+    
 @app.route("/video/<filename>")
 def video(filename):
     return send_from_directory(f"{RESULT_FOLDER}/runs", filename)
-
-@app.route("/result")
-def get_result():
-    return jsonify({"count": count})
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0")
