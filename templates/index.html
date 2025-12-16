@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <link rel="stylesheet" href="../static/style.css"> <!-- 🔥 連結 CSS -->
+</head>
+
+<body>
+
+    <h2>YOLO 圖片 / 影片 偵測</h2>
+
+    <div class="upload-box">
+        <input type="file" id="file">
+        <button onclick="upload()">上傳 + 偵測</button>
+    </div>
+
+    <p class="note">圖片支援：.jpg .jpeg .png .bmp .webp</p>
+    <p class="note">影片支援：.mp4 .avi .mov .mkv .webm</p>
+
+    <div id="wait"></div>
+
+    <div class="preview-area">
+        <img id="resultImg" width="400" style="display:none">
+        <video id="resultVideo" controls width="400" style="display:none"></video>
+    </div>
+
+    <div id="result"></div>
+
+    <script>
+        async function upload() {
+            const file = document.getElementById("file").files[0];
+            if (!file) {
+                alert("請先選擇檔案");
+                return;
+            }
+
+            let form = new FormData();
+            form.append("file", file);
+
+            document.getElementById("wait").innerText = "處理中，請稍候...";
+            const res = await fetch("/predict", { method: "POST", body: form });
+            const data = await res.json();
+
+            // 顯示影片
+            if (data.type == "video") {
+                document.getElementById("wait").innerText = "";
+                document.getElementById("resultVideo").src = data.video_url;
+                document.getElementById("resultVideo").style.display = "block";
+                document.getElementById("resultImg").style.display = "none";
+            }
+            // 顯示圖片
+            else if (data.type == "image") {
+                document.getElementById("wait").innerText = "";
+                document.getElementById("resultImg").src = "data:image/jpeg;base64," + data.image;
+                document.getElementById("resultImg").style.display = "block";
+                document.getElementById("resultVideo").style.display = "none";
+                const result = await fetch("/result");
+                const resultData = await result.json();
+                document.getElementById("result").innerText = `偵測到 ${resultData.count} 個物體`;
+            }
+            else {
+                alert("格式錯誤或模型處理失敗");
+            }
+        }
+    </script>
+
+</body>
+
+</html>

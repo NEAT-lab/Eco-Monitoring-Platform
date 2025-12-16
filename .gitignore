@@ -1,0 +1,10 @@
+*.pt
+uploads/
+results/
+__pycache__/
+temporary.py
+.DS_Store
+env/
+venv/
+.idea/
+.vscode/
