@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, jsonify, send_from_directory, send_file
+from flask import Flask, request, render_template, jsonify, send_from_directory
 import os
 from ultralytics import YOLO
 import cv2
@@ -6,14 +6,9 @@ import subprocess
 import numpy as np
 import base64
 import subprocess
-import os
+from common_parameters import latest_data
 
 def to_mp4(input_path, output_path=None):
-    """
-    將任意影片轉成 MP4，Chrome 可播放。
-    input_path: 原始影片路徑（avi/mp4/mkv/mov/...）
-    output_path: 輸出路徑（可選），預設跟 input_path 同名但副檔名改為 .mp4
-    """
     if output_path is None:
         output_path = os.path.splitext(input_path)[0] + ".mp4"
 
@@ -49,6 +44,7 @@ model = YOLO(current_model_path)
 total_count = 0
 count_by_class = {}
 
+# html pages
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -131,7 +127,7 @@ def api_detect():
         new_filename = f"{basename}.avi"
         
         # YOLO 偵測（可直接用model.predict也行）
-        model.predict(input_path, save=True, project=RESULT_FOLDER, name="runs", exist_ok=True)
+        model.predict(input_path, save=True, project=RESULT_FOLDER, name="./", exist_ok=True)
 
         #  取得 YOLO 存出的影片位置
         processed_video = f"{RESULT_FOLDER}/{new_filename}"
@@ -241,5 +237,6 @@ def api_panorama():
     except Exception as e:
         return jsonify({"type": "error", "message": f"物件辨識失敗: {str(e)}"}), 500
 
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0")
+@app.route("/api/data")
+def api_data():
+    return jsonify(latest_data)
