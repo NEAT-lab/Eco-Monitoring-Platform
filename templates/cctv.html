@@ -24,19 +24,6 @@
     <div>濕度：<span id="hum">--</span> %</div>
     <div>時間：<span id="time">--</span></div>
 
-    <script>
-    async function updateData() {
-        const res = await fetch("/api/data");
-        const data = await res.json();
-
-        temp.innerText = data.temperature ?? "--";
-        hum.innerText  = data.humidity ?? "--";
-        time.innerText = data.timestamp ?? "--";
-    }
-
-    setInterval(updateData, 1000);
-    updateData();
-    </script>
-
+    <script src="../static/cctv.js"></script>
 </body>
 </html>
