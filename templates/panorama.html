@@ -3,13 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>NCKU NEAT LAB</title>
     <link rel="stylesheet" href="../static/style.css">
 </head>
 
 <body>
     <header>
         <nav>
+            <div class="logo">
+                <img src="../static/images/neat_logo.jpg" width="50" height="50">
+                <span>NEAT LAB</span>
+            </div>
             <ul>
                 <li><a href="/">home</a></li>
                 <li><a href="/detect">detect</a></li>
@@ -18,26 +22,28 @@
             </ul>
         </nav>
     </header>
-    <h2>YOLO 全景辨識</h2>
-    <p class="note">上傳一段影片，系統會自動進行全景拼接並進行物件辨識。</p>
-    <p class="note">說明: 拍攝影片時請水平慢慢移動攝影機</p>
+    <main class="content">
+        <h2>YOLO 全景辨識</h2>
+        <p class="note">上傳一段影片，系統會自動進行全景拼接並進行物件辨識。</p>
+        <p class="note">說明: 拍攝影片時請水平慢慢移動攝影機</p>
 
-    <div>
-        <input type="file" id="file">
-        <button onclick="upload()">上傳 + 偵測</button>
-    </div>
+        <div class="upload-box">
+            <input type="file" id="file">
+            <button onclick="upload()">上傳 + 偵測</button>
+        </div>
 
-    <p class="note">影片支援：.mp4 .avi .mov .mkv .webm</p>
+        <p class="note">影片支援：.mp4 .avi .mov .mkv .webm</p>
 
-    <div id="wait"></div>
+        <div id="wait"></div>
 
-    <div class="preview-area">
-        <img id="resultImg" width="400" style="display:none">
-    </div>
+        <div class="preview-area">
+            <img id="resultImg" width="400" style="display:none">
+        </div>
 
-    <div id="result_img_count"></div>
-    <div id="result_count_by_class"></div>
-    
-    <script src="../static/panorama.js"></script>
+        <div id="result_img_count"></div>
+        <div id="result_count_by_class"></div>
+        
+        <script src="../static/panorama.js"></script>
+    </main>
 </body>
 </html>

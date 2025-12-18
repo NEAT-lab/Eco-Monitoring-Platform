@@ -3,12 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>NCKU NEAT LAB</title>
     <link rel="stylesheet" href="../static/style.css">
 </head>
 <body>
     <header>
         <nav>
+            <div class="logo">
+                <img src="../static/images/neat_logo.jpg" width="50" height="50">
+                <span>NEAT LAB</span>
+            </div>
             <ul>
                 <li><a href="/">home</a></li>
                 <li><a href="/detect">detect</a></li>
@@ -17,6 +21,17 @@
             </ul>
         </nav>
     </header>
-    This is the home page.
+    <main class="content">
+        <img src="../static/images/home_page_bird.jpg" width="600">
+        <p>鳥類偵測系統</p>
+        <p>此專案是基於 Flask 所開發的網頁應用程式，利用 YOLOv11 模型來偵測並計算鳥類數量。 
+            允許使用者上傳圖片或 MP4 影片，伺服器將運行物件偵測功能，以識別並計算上傳媒體（圖片、影片）中的鳥類數量。 
+            所使用之模型是基於 10000+ 訓練集。</p>
+        <img src="../static/images/home_page_bird_2.jpg" width="600">
+        <p>聯絡資訊</p>
+        <address>701 台南市東區大學路 1 號資訊工程系新館 4 樓 65402</address>
+        <p>neat@mail.csie.edu.tw</p>
+        <p>06-2757575 分機65402</p>
+    </main>
 </body>
 </html>

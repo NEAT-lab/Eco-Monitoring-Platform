@@ -1,90 +1,192 @@
+html, body {
+    height: 100%;
+}
+
 body {
-    font-family: "Segoe UI", sans-serif;
-    background: #f7f7f7;
-    text-align: center;
-    padding: 2px;
+    margin: 0;
+    font-family: "Segoe UI", "Noto Sans TC", sans-serif;
+    background: linear-gradient(to bottom, #235164, #eef3f6);
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    padding: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+header {
+    background: black;
+    position: sticky;
+    top: 0;
 }
 
 nav {
-    padding: 1px 0;
-    margin-bottom: 20px;
-}
-nav ul {
-    list-style-type: none;
     display: flex;
-    justify-content: center;
+    align-items: center;
+    justify-content: space-evenly;
+    padding: 10px 0;
+    margin: 0;
 }
-nav ul li {
-    margin: 0 15px;
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: white;
+    font-size: 20px;
+    font-weight: bold;
 }
-nav ul li a {
-    color: black;
+
+.logo img {
+    border-radius: 50%;
+    margin: 0;
+}
+
+nav ul {
+    list-style: none;
+    display: flex;
+    gap: 24px;
+    margin: 0;
+}
+
+nav a {
+    color: white;
     text-decoration: none;
-    font-size: 18px;
-    opacity: 0.7;
-}
-nav ul li a:hover {
-    opacity: 1;
-}
-
-h2 {
-    font-size: 28px;
-    margin-bottom: 15px;
-    color: #333;
-    background-color: lightblue;
-    display: inline-block;
-    padding: 8px 12px;
+    font-size: 24px;
+    padding: 6px 12px;
     border-radius: 20px;
+    transition: background 0.3s, transform 0.2s;
 }
 
-.upload-box {
-    margin-bottom: 20px;
-    padding: 15px;
+nav a:hover {
+    background: rgba(255, 255, 255, 0.25);
+    transform: translateY(-2px);
 }
 
-button {
-    background: #4CAF50;
-    border: none;
+/* ===== 主內容區 ===== */
+h2 {
+    text-align: center;
+    margin-top: 40px;
     color: black;
-    padding: 8px 14px;
-    font-size: 16px;
+}
+
+p, address {
+    max-width: 900px;
+    margin: 5px auto;
+    padding: 0 20px;
+}
+
+/* ===== 圖片 ===== */
+img {
+    display: block;
+    margin: 5px auto;
+    border-radius: 18px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+}
+
+/* ===== 上傳卡片 ===== */
+.upload-box {
+    max-width: 500px;
+    margin: 30px auto;
+    padding: 25px;
+    background: white;
+    border-radius: 20px;
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+    text-align: center;
+}
+
+.upload-box label {
+    font-weight: bold;
+    color: #0077a3;
+}
+
+/* ===== 表單元件 ===== */
+input[type="file"],
+select {
+    margin-top: 10px;
+    padding: 8px;
+    border-radius: 10px;
+    border: 1px solid #ccc;
+}
+
+/* ===== 按鈕 ===== */
+button {
+    margin-top: 12px;
+    padding: 10px 22px;
+    border: none;
+    border-radius: 30px;
+    background: linear-gradient(135deg, #00a8cc, #6fd6ff);
+    color: white;
+    font-size: 14px;
     cursor: pointer;
-    border-radius: 6px;
+    transition: transform 0.2s, box-shadow 0.2s;
 }
 
 button:hover {
-    background: #45a049;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0, 168, 204, 0.4);
 }
 
 .note {
-    color: #666;
+    text-align: center;
     font-size: 14px;
+    color: black
 }
 
 .preview-area {
-    margin-top: 20px;
+    display: none;
+    justify-content: center;
+    gap: 30px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.preview-area:has(img[src]),
+.preview-area:has(video[src]) {
+    display: flex;
+}
+
+#result_img_count,
+#result_count_by_class {
+    max-width: 600px;
+    margin: 5px auto;
+    background: #f2fbff;
+    padding: 15px 20px;
+    border-radius: 15px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+    text-align:center;
+}
+
+/* 隱藏尚無內容的結果區塊 */
+#result_img_count:empty,
+#result_count_by_class:empty {
+    display: none;
+}
+
+/* ===== Footer感（聯絡資訊） ===== */
+address {
+    background: #f0fbff;
+    padding: 15px;
+    border-radius: 15px;
+}
+
+#wait{
+    text-align: center;
+    color: #0077a3;
+}
+
+/* 讓主內容撐滿剩餘高度 */
+main.content {
+    flex: 1 0 auto;
     display: flex;
     flex-direction: column;
-    align-items: center;
 }
 
-img, video {
-    border-radius: 5px;
-    border: 2px solid #ddd;
-    box-shadow: 0 0 15px rgba(0,0,0,0.1);
+#temperature, #humidity, #timestamp {
+    font-size: 24px;
+    color: rgb(0, 0, 0);
 }
 
-#result_img_count {
-    font-size: 20px;
-    display: inline-block;
-    margin-top: 30px;
-    background-color: yellow;
-}
-
-input[type="file"] {
-    border: 2px solid #4CAF50;
-    border-radius: 6px;
-    padding: 6px 10px;
-    font-size: 16px;
-    cursor: pointer;
+#raspberry {
+    font-size: 30px;
 }

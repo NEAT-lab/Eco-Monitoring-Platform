@@ -7,5 +7,5 @@ async function updateData() {
     time.innerText = data.timestamp ?? "--";
 }
 
-setInterval(updateData, 1000);
+setInterval(updateData, 10000);
 updateData();
