@@ -16,7 +16,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 
 def on_message(client, userdata, msg):
     payload = msg.payload.decode()
-    print("MQTT recv:", payload)
+    # print("MQTT recv:", payload)
 
     try:
         data = json.loads(payload)
