@@ -28,6 +28,10 @@
         <p class="note">說明: 拍攝影片時請水平慢慢移動攝影機</p>
 
         <div class="upload-box">
+            <label for="modelSelect">選擇模型：</label>
+            <select id="modelSelect"></select>
+            <button onclick="setModel()">設定模型</button>
+            <br><br>
             <input type="file" id="file">
             <button onclick="upload()">上傳 + 偵測</button>
         </div>
