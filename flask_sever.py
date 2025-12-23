@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, jsonify, send_from_directory
+from flask import Flask, request, render_template, jsonify, send_from_directory, Response
 import os
 from ultralytics import YOLO
 import cv2
@@ -8,6 +8,7 @@ import base64
 import subprocess
 from common_parameters import latest_data
 import time
+import rtsp_sever
 
 def to_mp4(input_path, output_path=None):
     if output_path is None:
@@ -242,3 +243,8 @@ def api_panorama():
 @app.route("/api/data")
 def api_data():
     return jsonify(latest_data)
+
+@app.route('/video_feed')
+def video_feed():
+    return Response(rtsp_sever.generate_frames(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')

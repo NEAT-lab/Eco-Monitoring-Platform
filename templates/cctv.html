@@ -21,14 +21,20 @@
             </ul>
         </nav>
     </header>
-    <main class="content">
-        <h2 id="raspberry">實驗室 neat 樹莓派溫溼度監測</h2>
+    <div style="display: flex; gap: 20px; align-items: flex-start;">
+        <main class="content">
+            <h2 id="raspberry">實驗室 neat 樹莓派溫溼度監測</h2>
 
-        <div id="temperature" class="upload-box">溫度：<span id="temp">--</span> °C</div>
-        <div id="humidity" class="upload-box">濕度：<span id="hum">--</span> %</div>
-        <div id="timestamp" class="upload-box">時間：<span id="time">--</span></div>
+            <div id="temperature" class="upload-box">溫度：<span id="temp">--</span> °C</div>
+            <div id="humidity" class="upload-box">濕度：<span id="hum">--</span> %</div>
+            <div id="timestamp" class="upload-box">時間：<span id="time">--</span></div>
 
-        <script src="../static/cctv.js"></script>
-    </main>
+            <script src="../static/cctv.js"></script>
+        </main>
+        <div>
+            <h2>rtsp 測試影像</h2>
+            <img src="/video_feed" width="800">
+        </div>
+    </div>
 </body>
 </html>
