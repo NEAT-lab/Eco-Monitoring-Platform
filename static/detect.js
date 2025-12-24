@@ -1,21 +1,12 @@
+let modelPath = "";
+
 async function setModel() {
-    const modelPath = document.getElementById("modelSelect").value.trim();
+    modelPath = document.getElementById("modelSelect").value.trim();
     if (!modelPath) {
         alert("請輸入模型路徑");
         return;
     }
-
-    const res = await fetch("/set_model", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model_path: modelPath })
-    });
-    const data = await res.json();
-    if (data.status == "ok") {
-        alert(`模型設定成功: ${data.model}`);
-    } else {
-        alert(`模型設定失敗: ${data.message}`);
-    }
+    alert(`已選擇模型: ${modelPath}`);
 }
 
 window.onload = async function () {
@@ -28,6 +19,8 @@ window.onload = async function () {
         opt.innerText = m;
         select.appendChild(opt);
     });
+    modelPath = "pt/yolov8n.pt";  // 預設模型
+    select.value = modelPath;
 }
 
 async function upload() {
@@ -39,6 +32,7 @@ async function upload() {
 
     let form = new FormData();
     form.append("file", file);
+    form.append("model_path", modelPath);
 
     document.getElementById("wait").innerText = "處理中，請稍候...";
     document.getElementById("resultImg").style.display = "none";

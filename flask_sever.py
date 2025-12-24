@@ -7,6 +7,7 @@ import numpy as np
 import base64
 import subprocess
 from common_parameters import latest_data
+import time
 
 def to_mp4(input_path, output_path=None):
     if output_path is None:
@@ -36,13 +37,11 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
 
 MODEL_FOLDER = "pt"
-available_models = [f for f in os.listdir(MODEL_FOLDER) if f.endswith(".pt")]
+available_models = sorted([f for f in os.listdir(MODEL_FOLDER) if f.endswith(".pt")])
+models_list = [YOLO(os.path.join(MODEL_FOLDER, f)) for f in available_models]
+models = {os.path.join(MODEL_FOLDER, f): m for f, m in zip(available_models, models_list)}
 
-current_model_path = "pt/yolov5su.pt"
-model = YOLO(current_model_path)
 
-total_count = 0
-count_by_class = {}
 
 # html pages
 @app.route("/")
@@ -66,24 +65,18 @@ def panorama():
 def get_models():
     return jsonify({"models": available_models})
 
-@app.route("/set_model", methods=["POST"])
-def set_model():
-    global model, current_model_path
-    data = request.json
-    path = data.get("model_path")
-    if not path or not os.path.exists(path):
-        return jsonify({"status":"error","message":"模型不存在"}), 400
-    
-    current_model_path = path
-    model = YOLO(current_model_path)
-    return jsonify({"status":"ok","model":current_model_path})
-
 @app.route("/api/detect", methods=["POST"])
 def api_detect():
-    global total_count, model, count_by_class
     total_count = 0
-    count_by_class.clear()
-
+    count_by_class = {}
+    
+    model_path = request.form.get("model_path")
+    print("使用模型:", model_path)
+    if model_path in models:
+        model = models[model_path]
+    else:
+        return jsonify({"type": "error", "message": "Model not found."}), 400
+    
     file = request.files["file"]
     filename = file.filename.lower()
     ext = os.path.splitext(filename)[1]
@@ -118,6 +111,8 @@ def api_detect():
         return jsonify({"type": "image", "image": img_base64, "total_count": total_count, "count_by_class": count_by_class})
     
     elif ext in [".mp4",".avi",".mov",".mkv",".webm"]:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        file.filename = f"{ts}_{file.filename}"
         input_path = f"{UPLOAD_FOLDER}/{file.filename}"
 
         file.save(input_path)
@@ -146,11 +141,18 @@ def video(filename):
 
 @app.route("/api/panorama", methods=["POST"])
 def api_panorama():
-    global total_count, model, count_by_class
     total_count = 0
-    count_by_class.clear()
+    count_by_class = {}
+
+    model_path = request.form.get("model_path")
+    if model_path in models:
+        model = models[model_path]
+    else:
+        return jsonify({"type": "error", "message": "Model not found."}), 400
 
     file = request.files["file"]
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    file.filename = f"{ts}_{file.filename}"
     filename = file.filename.lower()
     ext = os.path.splitext(filename)[1]
 
