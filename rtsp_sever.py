@@ -1,12 +1,12 @@
 import cv2
 import os
 import time
+from ultralytics import YOLO
+
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-
-
-# RTSP URL（強制 TCP）
 rtsp_url = "rtsp://rtspstream:sgxCxxzgOsO2ShXv_F5Jj@zephyr.rtsp.stream/movie"
-cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+
+model = YOLO("pt/yolo11n.pt")
 
 def generate_frames():
     while True:
@@ -23,7 +23,10 @@ def generate_frames():
                 cap.release()
                 break  # 重新建立 RTSP
 
-            ret, buffer = cv2.imencode('.jpg', frame)
+            results = model(frame, verbose=False)
+            annotated_frame = results[0].plot()
+            
+            ret, buffer = cv2.imencode('.jpg', annotated_frame)
             frame_bytes = buffer.tobytes()
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
