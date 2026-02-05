@@ -8,7 +8,6 @@ import base64
 import subprocess
 from common_parameters import latest_data
 import time
-import rtsp_sever
 from requests.auth import HTTPDigestAuth, HTTPBasicAuth
 import requests
 import urllib3
@@ -35,6 +34,62 @@ def to_mp4(input_path, output_path=None):
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return output_path
 
+def generate_frames(rtsp_url):
+    model = YOLO("pt/yolo11x.pt")
+    while True:
+        cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+        if not cap.isOpened():
+            print(" RTSP open failed, retrying in 3s...")
+            time.sleep(3)
+            continue
+
+        prev_frame_time = 0
+        
+        while True:
+            success, frame = cap.read()
+            if not success:
+                print(" Frame read failed, reconnecting...")
+                cap.release()
+                break
+
+            results = model(frame, verbose=False)
+            
+            # 只保留 bird 類別的框
+            bird_frame = frame.copy()
+            bird_count = 0
+            
+            for box in results[0].boxes:
+                class_id = int(box.cls)
+                class_name = model.names[class_id]
+                
+                if class_name.lower() == 'bird':  # 只框 bird
+                    bird_count += 1
+                    # 繪製邊框
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(bird_frame, (x1, y1), (x2, y2), (255, 0, 0), 3)
+                    # 標籤
+                    cv2.putText(bird_frame, 'bird', (x1, y1 - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)
+            
+            # 計算 FPS
+            current_time = time.time()
+            fps = 1 / (current_time - prev_frame_time) if (current_time - prev_frame_time) > 0 else 0
+            prev_frame_time = current_time
+            
+            # 顯示 bird 總數
+            cv2.putText(bird_frame, f"Birds: {bird_count}", 
+                       (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 
+                       1.5, (0, 255, 0), 2)
+            
+            # 顯示 FPS
+            cv2.putText(bird_frame, f"FPS: {fps:.1f}", 
+                       (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 
+                       1.5, (255, 0, 0), 2)
+            
+            ret, buffer = cv2.imencode('.jpg', bird_frame)
+            frame_bytes = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
 app = Flask(__name__)
 
@@ -48,7 +103,9 @@ available_models = sorted([f for f in os.listdir(MODEL_FOLDER) if f.endswith(".p
 models_list = [YOLO(os.path.join(MODEL_FOLDER, f)) for f in available_models]
 models = {os.path.join(MODEL_FOLDER, f): m for f, m in zip(available_models, models_list)}
 
-
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+rtsp_url_1 = "rtsp://root:pass@221.120.74.49:9664/axis-media/media.amp"
+rtsp_url_2 = "rtsp://root:pass@221.120.74.49:9666/axis-media/media.amp"
 
 # html pages
 @app.route("/")
@@ -250,14 +307,14 @@ def api_panorama():
 def api_data():
     return jsonify(latest_data)
 
-@app.route('/video_feed')
-def video_feed():
-    return Response(rtsp_sever.generate_frames(),
+@app.route('/video_feed_1')
+def video_feed_1():
+    return Response(generate_frames(rtsp_url_1),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/video_feed_2')
 def video_feed_2():
-    return Response(rtsp_sever.generate_frames_2(),
+    return Response(generate_frames(rtsp_url_2),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
     
 @app.route('/api/zoom', methods=['POST'])
