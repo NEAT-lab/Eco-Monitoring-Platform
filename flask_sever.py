@@ -9,6 +9,12 @@ import subprocess
 from common_parameters import latest_data
 import time
 import rtsp_sever
+from requests.auth import HTTPDigestAuth, HTTPBasicAuth
+import requests
+import urllib3
+
+# 禁用 SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def to_mp4(input_path, output_path=None):
     if output_path is None:
@@ -248,3 +254,86 @@ def api_data():
 def video_feed():
     return Response(rtsp_sever.generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/video_feed_2')
+def video_feed_2():
+    return Response(rtsp_sever.generate_frames_2(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+    
+@app.route('/api/zoom', methods=['POST'])
+def zoom():
+    # 獲取前端發送的 JSON 數據
+    data = request.get_json()
+    zoom_value = data.get('zoom')
+
+    # 發送命令到攝影機
+    url = f'https://221.120.74.49:9661/axis-cgi/com/ptz.cgi'
+    params = {'zoom': zoom_value, 'camera': 1}
+
+    try:
+        response = requests.post(
+            url,
+            data=params,
+            auth=HTTPDigestAuth("root", "pass"),
+            verify=False,
+            timeout=5
+        )
+        return jsonify({'status': 'success', 'zoom': zoom_value})
+    except:
+        return jsonify({'error': '無法連接到攝影機'}), 500
+    
+@app.route('/api/zoom_2', methods=['POST'])
+def zoom_2():
+    # 獲取前端發送的 JSON 數據
+    data = request.get_json()
+    zoom_value = data.get('zoom')
+
+    # 發送命令到攝影機
+    url = f'https://221.120.74.49:9663/axis-cgi/com/ptz.cgi'
+    params = {'zoom': zoom_value, 'camera': 1}
+
+    try:
+        response = requests.post(
+            url,
+            data=params,
+            auth=HTTPBasicAuth("root", "pass"),
+            verify=False,
+            timeout=5
+        )
+        return jsonify({'status': 'success', 'zoom': zoom_value})
+    except:
+        return jsonify({'error': '無法連接到攝影機'}), 500
+
+@app.route('/api/direction_2', methods=['POST'])
+def direction_2():
+    # 獲取方向
+    data = request.get_json()
+    direction = data.get('direction')
+
+    # 根據方向決定參數
+    params = {'camera': 1}
+    
+    if direction == 'up':
+        params['tilt'] = 30
+    elif direction == 'down':
+        params['tilt'] = -30
+    elif direction == 'left':
+        params['pan'] = -45
+    elif direction == 'right':
+        params['pan'] = 45
+
+    # 發送命令到攝影機
+    url = f'https://221.120.74.49:9663/axis-cgi/com/ptz.cgi'
+
+    try:
+        response = requests.post(
+            url,
+            data=params,
+            auth=HTTPBasicAuth("root", "pass"),
+            verify=False,
+            timeout=5
+        )
+        return jsonify({'status': 'success', 'direction': direction})
+    except:
+        return jsonify({'error': '無法連接到攝影機'}), 500
+    

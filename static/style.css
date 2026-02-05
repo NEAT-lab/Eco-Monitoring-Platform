@@ -1,5 +1,12 @@
 html, body {
     height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+}
+
+* {
+    box-sizing: border-box;
 }
 
 body {
@@ -18,14 +25,17 @@ header {
     background: black;
     position: sticky;
     top: 0;
+    z-index: 100;
 }
 
 nav {
     display: flex;
     align-items: center;
     justify-content: space-evenly;
-    padding: 10px 0;
+    padding: 10px 20px;
     margin: 0;
+    flex-wrap: wrap;
+    gap: 20px;
 }
 
 .logo {
@@ -40,6 +50,8 @@ nav {
 .logo img {
     border-radius: 50%;
     margin: 0;
+    width: 50px;
+    height: 50px;
 }
 
 nav ul {
@@ -47,6 +59,8 @@ nav ul {
     display: flex;
     gap: 24px;
     margin: 0;
+    flex-wrap: wrap;
+    justify-content: center;
 }
 
 nav a {
@@ -82,17 +96,26 @@ img {
     margin: 5px auto;
     border-radius: 18px;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+    max-width: 100%;
+    height: auto;
+}
+
+/* RTSP 串流圖片移除 margin */
+#rtsp_test,
+#rtsp_test_2 {
+    margin: 0 auto;
 }
 
 /* ===== 上傳卡片 ===== */
 .upload-box {
-    max-width: 500px;
+    max-width: calc(100% - 40px);
     margin: 30px auto;
     padding: 25px;
     background: white;
     border-radius: 20px;
     box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
     text-align: center;
+    box-sizing: border-box;
 }
 
 .upload-box label {
@@ -107,6 +130,9 @@ select {
     padding: 8px;
     border-radius: 10px;
     border: 1px solid #ccc;
+    width: 100%;
+    max-width: 300px;
+    box-sizing: border-box;
 }
 
 /* ===== 按鈕 ===== */
@@ -130,7 +156,7 @@ button:hover {
 .note {
     text-align: center;
     font-size: 14px;
-    color: black
+    color: black;
 }
 
 .preview-area {
@@ -139,6 +165,7 @@ button:hover {
     gap: 30px;
     flex-wrap: wrap;
     margin-top: 10px;
+    padding: 0 20px;
 }
 
 .preview-area:has(img[src]),
@@ -154,7 +181,7 @@ button:hover {
     padding: 15px 20px;
     border-radius: 15px;
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
-    text-align:center;
+    text-align: center;
 }
 
 /* 隱藏尚無內容的結果區塊 */
@@ -170,7 +197,7 @@ address {
     border-radius: 15px;
 }
 
-#wait{
+#wait {
     text-align: center;
     color: #0077a3;
 }
@@ -188,9 +215,251 @@ main.content {
 }
 
 #raspberry {
-    font-size: 30px;
+    font-size: 20px;
 }
 
-#rtsp_test {
-    margin-right: 50px;
+#main-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 0 20px;
+    flex: 1 0 auto;
+    width: 100%;
+    box-sizing: border-box;
+    max-width: 100%;
+}
+
+#video-section {
+    width: 100%;
+}
+
+#control_section {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 10px;
+    width: 100%;
+    padding: 0;
+}
+
+#control_section_left,
+#control_section_right {
+    width: 100%;
+}
+
+#rtsp_test,
+#rtsp_test_2 {
+    border-radius: 4px;
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+    margin: 0 auto;
+}
+
+#sensor-section {
+    width: 100%;
+}
+
+/* ===== 平板裝置（768px 以上） ===== */
+@media (min-width: 768px) {
+    nav {
+        justify-content: space-evenly;
+    }
+
+    nav ul {
+        gap: 24px;
+    }
+
+    #video-wrapper {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    #rtsp_test,
+    #rtsp_test_2 {
+        width: 100%;
+        height: auto;
+    }
+
+    #main-container {
+        padding: 0 40px;
+    }
+}
+
+/* ===== 桌機裝置（1024px 以上） ===== */
+@media (min-width: 1024px) {
+    nav {
+        justify-content: space-evenly;
+    }
+
+    #main-container {
+        padding: 0 60px;
+        margin: 0 auto;
+        max-width: 1200px;
+    }
+
+    #video-wrapper {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    #rtsp_test,
+    #rtsp_test_2 {
+        width: 100%;
+        height: auto;
+        max-height: 500px;
+        object-fit: contain;
+    }
+}
+
+/* ===== 小型手機（320px - 480px） ===== */
+@media (max-width: 480px) {
+    nav {
+        flex-direction: row;
+        gap: 0;
+        padding: 8px 5px;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    nav ul {
+        gap: 8px;
+        flex-direction: row;
+        width: auto;
+        flex-wrap: nowrap;
+        margin-left: auto;
+    }
+
+    nav a {
+        font-size: 12px;
+        padding: 6px 8px;
+        width: auto;
+        text-align: center;
+        white-space: nowrap;
+    }
+
+    .logo {
+        font-size: 14px;
+        gap: 6px;
+        width: auto;
+        justify-content: flex-start;
+        flex-shrink: 0;
+    }
+
+    .logo img {
+        width: 35px;
+        height: 35px;
+    }
+
+    h2 {
+        font-size: 18px;
+        margin-top: 20px;
+    }
+
+    p, address {
+        padding: 0 15px;
+    }
+
+    .upload-box {
+        max-width: calc(100% - 20px);
+        margin: 20px auto;
+        padding: 15px;
+        box-sizing: border-box;
+    }
+
+    input[type="file"],
+    select {
+        max-width: 100%;
+    }
+
+    #temperature, #humidity, #timestamp {
+        font-size: 18px;
+    }
+
+    #raspberry {
+        font-size: 16px;
+    }
+
+    #main-container {
+        padding: 0 10px;
+        gap: 15px;
+    }
+
+    #video-wrapper {
+        grid-template-columns: 1fr;
+        gap: 10px;
+        padding: 0;
+    }
+
+    #rtsp_test,
+    #rtsp_test_2 {
+        width: 100%;
+        height: auto;
+    }
+
+    .preview-area {
+        gap: 15px;
+        padding: 0 10px;
+    }
+
+    button {
+        padding: 8px 16px;
+        font-size: 12px;
+    }
+
+    nav a:hover {
+        transform: none;
+    }
+}
+
+/* ===== 中型手機（481px - 767px） ===== */
+@media (min-width: 481px) and (max-width: 767px) {
+    nav {
+        justify-content: space-between;
+        padding: 10px 15px;
+        flex-wrap: nowrap;
+    }
+
+    nav ul {
+        gap: 12px;
+        flex-wrap: nowrap;
+    }
+
+    nav a {
+        font-size: 14px;
+        padding: 6px 10px;
+        white-space: nowrap;
+    }
+
+    .logo {
+        font-size: 16px;
+        gap: 8px;
+        flex-shrink: 0;
+    }
+
+    .logo img {
+        width: 40px;
+        height: 40px;
+    }
+
+    h2 {
+        font-size: 20px;
+        margin-top: 30px;
+    }
+
+    #temperature, #humidity, #timestamp {
+        font-size: 20px;
+    }
+
+    #main-container {
+        padding: 0 25px;
+    }
+
+    #video-wrapper {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+
+    #rtsp_test,
+    #rtsp_test_2 {
+        width: 100%;
+        height: auto;
+    }
 }
