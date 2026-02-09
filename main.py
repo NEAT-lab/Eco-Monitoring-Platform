@@ -4,4 +4,5 @@ import threading
 
 if __name__ == "__main__":
     threading.Thread(target=mqtt_sever.mqtt_thread, daemon=True).start()
-    flask_sever.app.run(debug=False, host="0.0.0.0", port=5001)
+    flask_sever.init_db()
+    flask_sever.app.run(debug=False, host="0.0.0.0", port=5000)

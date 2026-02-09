@@ -11,6 +11,31 @@ import time
 from requests.auth import HTTPDigestAuth, HTTPBasicAuth
 import requests
 import urllib3
+import sqlite3
+from datetime import datetime
+
+DB_NAME = 'cctv.db'
+
+def init_db():
+    # 連接資料庫 (如果檔案不存在，會自動建立)
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    # 執行 SQL 指令建立表格
+    # IF NOT EXISTS: 避免重複建立報錯
+    # PRIMARY KEY (date, hour): 設定複合主鍵
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS hourly_max (
+            date TEXT,
+            hour INTEGER,
+            max_count INTEGER,
+            PRIMARY KEY (date, hour)
+        )
+    ''')
+
+    conn.commit() # 確認執行
+    conn.close()  # 關閉連線
+    print(f"成功建立資料庫: {DB_NAME}")
 
 # 禁用 SSL 警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -34,8 +59,8 @@ def to_mp4(input_path, output_path=None):
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return output_path
 
+generate_frames_model = YOLO("pt/yolo11x.pt")
 def generate_frames(rtsp_url):
-    model = YOLO("pt/yolo11x.pt")
     while True:
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         if not cap.isOpened():
@@ -52,7 +77,7 @@ def generate_frames(rtsp_url):
                 cap.release()
                 break
 
-            results = model(frame, verbose=False)
+            results = generate_frames_model(frame, verbose=False)
             
             # 只保留 bird 類別的框
             bird_frame = frame.copy()
@@ -60,7 +85,7 @@ def generate_frames(rtsp_url):
             
             for box in results[0].boxes:
                 class_id = int(box.cls)
-                class_name = model.names[class_id]
+                class_name = generate_frames_model.names[class_id]
                 
                 if class_name.lower() == 'bird':  # 只框 bird
                     bird_count += 1
@@ -70,6 +95,8 @@ def generate_frames(rtsp_url):
                     # 標籤
                     cv2.putText(bird_frame, 'bird', (x1, y1 - 10),
                                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)
+            
+            update_hourly_max(bird_count, bird_frame)
             
             # 計算 FPS
             current_time = time.time()
@@ -91,6 +118,62 @@ def generate_frames(rtsp_url):
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
+
+IMAGE_FOLDER = os.path.join("static", "captures")
+if not os.path.exists(IMAGE_FOLDER):
+    os.makedirs(IMAGE_FOLDER)
+
+def update_hourly_max(current_bird_count, frame):
+    # 1. 取得當前時間資訊
+    now = datetime.now()
+    date_str = now.strftime('%Y-%m-%d') # 格式: 2023-10-27
+    current_hour = now.hour             # 格式: 14 (代表下午兩點)
+    filename = f"bird_{date_str}_{current_hour}.jpg"
+
+    try:
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            
+            # 2. 查詢該小時目前的紀錄
+            cursor.execute(
+                'SELECT max_count FROM hourly_max WHERE date = ? AND hour = ?', 
+                (date_str, current_hour)
+            )
+            row = cursor.fetchone()
+
+            save_image = False # 標記是否需要存照片
+            
+            if row is None:
+                # 3. 情況 A: 該小時還沒有任何紀錄 -> 直接新增
+                cursor.execute(
+                    'INSERT INTO hourly_max (date, hour, max_count) VALUES (?, ?, ?)', 
+                    (date_str, current_hour, current_bird_count)
+                )
+                save_image = True
+                print(f"[{date_str} {current_hour}:00] 新增紀錄: {current_bird_count} 隻")
+
+            else:
+                # 4. 情況 B: 該小時已有紀錄 -> 檢查是否打破紀錄
+                existing_max = row[0]
+                if current_bird_count > existing_max:
+                    cursor.execute(
+                        'UPDATE hourly_max SET max_count = ? WHERE date = ? AND hour = ?', 
+                        (current_bird_count, date_str, current_hour)
+                    )
+                    save_image = True
+                    print(f"[{date_str} {current_hour}:00] 更新最大值: {existing_max} -> {current_bird_count} 隻")
+            
+            conn.commit()
+            
+            # 如果有更新紀錄，就直接把照片存到硬碟 (覆蓋舊的)
+            if save_image and frame is not None:
+                image_path = os.path.join(IMAGE_FOLDER, filename)
+                cv2.imwrite(image_path, frame)
+                print(f"已更新最大值照片: {filename}")
+            
+    except Exception as e:
+        print(f"資料庫更新失敗: {e}")
+
 app = Flask(__name__)
 
 UPLOAD_FOLDER = "uploads"
@@ -104,8 +187,8 @@ models_list = [YOLO(os.path.join(MODEL_FOLDER, f)) for f in available_models]
 models = {os.path.join(MODEL_FOLDER, f): m for f, m in zip(available_models, models_list)}
 
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-rtsp_url_1 = "rtsp://root:pass@221.120.74.49:9664/axis-media/media.amp"
-rtsp_url_2 = "rtsp://root:pass@221.120.74.49:9666/axis-media/media.amp"
+rtsp_url_1 = "rtsp://root:pass@145.245.74.49:9664/axis-media/media.amp"
+rtsp_url_2 = "rtsp://root:pass@145.245.74.49:9666/axis-media/media.amp"
 
 # html pages
 @app.route("/")
@@ -324,7 +407,7 @@ def zoom():
     zoom_value = data.get('zoom')
 
     # 發送命令到攝影機
-    url = f'https://221.120.74.49:9661/axis-cgi/com/ptz.cgi'
+    url = f'https://145.245.74.49:9661/axis-cgi/com/ptz.cgi'
     params = {'zoom': zoom_value, 'camera': 1}
 
     try:
@@ -346,7 +429,7 @@ def zoom_2():
     zoom_value = data.get('zoom')
 
     # 發送命令到攝影機
-    url = f'https://221.120.74.49:9663/axis-cgi/com/ptz.cgi'
+    url = f'https://145.245.74.49:9663/axis-cgi/com/ptz.cgi'
     params = {'zoom': zoom_value, 'camera': 1}
 
     try:
@@ -380,7 +463,7 @@ def direction_2():
         params['pan'] = 45
 
     # 發送命令到攝影機
-    url = f'https://221.120.74.49:9663/axis-cgi/com/ptz.cgi'
+    url = f'https://145.245.74.49:9663/axis-cgi/com/ptz.cgi'
 
     try:
         response = requests.post(
@@ -394,3 +477,36 @@ def direction_2():
     except:
         return jsonify({'error': '無法連接到攝影機'}), 500
     
+@app.route('/api/daily_stats')
+def get_daily_stats():
+    """
+    API: 根據請求的日期，回傳該日 0~23 點的每小時最大鳥類數量。
+    參數: date (格式 YYYY-MM-DD)，若無參數則預設為今天。
+    """
+    # 取得前端傳來的日期參數，如果沒傳就用今天
+    query_date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
+    
+    try:
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            # 查詢該日期的所有紀錄
+            cursor.execute('SELECT hour, max_count FROM hourly_max WHERE date = ?', (query_date,))
+            rows = cursor.fetchall()
+            
+            # 初始化一個長度為 24 的陣列，預設值為 0
+            # index 0 代表 00:00, index 23 代表 23:00
+            hourly_data = [0] * 24
+            
+            # 將資料庫查到的數據填入對應的小時
+            for hour, count in rows:
+                if 0 <= hour < 24:
+                    hourly_data[hour] = count
+            
+            return jsonify({
+                'date': query_date,
+                'data': hourly_data
+            })
+            
+    except Exception as e:
+        print(f"API Error: {e}")
+        return jsonify({'error': str(e)}), 500

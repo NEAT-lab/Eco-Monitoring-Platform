@@ -3,7 +3,7 @@ async function updateData() {
     const data = await res.json();
 
     temp.innerText = data.temperature ?? "--";
-    hum.innerText  = data.humidity ?? "--";
+    hum.innerText = data.humidity ?? "--";
     time.innerText = data.timestamp ?? "--";
 }
 
@@ -122,6 +122,210 @@ async function sendZoomCommand_2(zoomValue) {
         zoomStatus_2.textContent = '錯誤: ' + error.message;
     }
 }
+
+document.addEventListener("DOMContentLoaded", function () {
+    // 1. 初始化變數與 DOM 元素
+    const ctx = document.getElementById('birdChart').getContext('2d');
+    const datePicker = document.getElementById('datePicker');
+    const btnPrev = document.getElementById('btnPrev');
+    const btnNext = document.getElementById('btnNext');
+    const btnToday = document.getElementById('btnToday');
+
+    // 取得圖片相關元素
+    const recordImage = document.getElementById('recordImage');
+    const imageTitle = document.getElementById('imageTitle');
+    const noImageText = document.getElementById('noImageText');
+
+    // 設定初始日期為今天
+    let currentDate = new Date();
+
+    // 用來記錄上一次的狀態，避免重複刷新圖片
+    let lastMaxHour = -1;
+    let lastMaxCount = -1;
+    let lastDateStr = "";
+
+    // 用來標記使用者是否正在手動查看某張圖
+    let isManualSelection = false; 
+
+    // 格式化日期為 YYYY-MM-DD
+    function formatDate(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    function updateDatePicker() {
+        datePicker.value = formatDate(currentDate);
+    }
+
+    updateDatePicker();
+
+    function loadImage(hour, count) {
+        const dateStr = formatDate(currentDate);
+        // 檔名規則: bird_YYYY-MM-DD_H.jpg (注意 hour 是整數，沒有補0)
+        // 加上 ?t=... 是為了防止瀏覽器快取舊照片
+        const imagePath = `/static/captures/bird_${dateStr}_${hour}.jpg?t=${new Date().getTime()}`;
+
+        imageTitle.innerText = `${dateStr} ${hour}:00 - 最大數量: ${count} 隻`;
+
+        // 預載圖片，等載入完成後再切換，避免破圖或閃爍
+        const tempImg = new Image();
+        tempImg.src = imagePath;
+
+        tempImg.onload = function () {
+            recordImage.src = imagePath;
+            recordImage.style.display = 'block';
+            noImageText.style.display = 'none';
+        };
+
+        tempImg.onerror = function () {
+            // 只有在真的找不到圖時才隱藏
+            // recordImage.style.display = 'none'; // 選擇性：你可以保留舊圖或隱藏
+            noImageText.style.display = 'block';
+            noImageText.innerText = `( ${hour}:00 尚無紀錄照片 )`;
+        };
+    }
+
+    // 2. 初始化 Chart.js (設定為長條圖)
+    const hourLabels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+    const birdChart = new Chart(ctx, {
+        type: 'bar', // [修改] 這裡改成 'bar' 即為長條圖
+        data: {
+            labels: hourLabels,
+            datasets: [{
+                label: '每小時最大鳥類數量',
+                data: [],
+                // 長條圖樣式設定
+                backgroundColor: 'rgba(54, 162, 235, 0.6)', // 長條內部的顏色 (半透明藍色)
+                borderColor: 'rgba(54, 162, 235, 1)',       // 邊框顏色 (深藍色)
+                borderWidth: 1,                              // 邊框寬度
+                borderRadius: 4,                             // [選用] 讓長條頂端圓角化
+                barPercentage: 0.8                           // [選用] 控制長條寬度 (0.1 ~ 1.0)
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            onClick: (e) => {
+                const points = birdChart.getElementsAtEventForMode(e, 'nearest', { intersect: true }, true);
+                if (points.length) {
+                    const index = points[0].index; // 取得點擊的索引 (即小時 0-23)
+                    const count = birdChart.data.datasets[0].data[index]; // 取得該小時的數量
+                    // 呼叫載入照片函式
+                    loadImage(index, count);
+                    isManualSelection = true;
+                }
+            },
+            plugins: {
+                title: { display: true, text: '載入中...', font: { size: 16 } },
+                tooltip: { mode: 'index', intersect: false },
+                legend: { display: true, position: 'top' }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: '數量 (隻)' },
+                    ticks: { stepSize: 1 }
+                },
+                x: {
+                    title: { display: true, text: '時間 (小時)' },
+                    grid: { display: false } // [選用] 隱藏 X 軸網格讓長條更乾淨
+                }
+            }
+        }
+    });
+
+    // 3. 抓取數據並更新圖表 (邏輯不變)
+    async function fetchDailyData() {
+        const dateStr = formatDate(currentDate);
+        birdChart.options.plugins.title.text = `${dateStr} 鳥類活動統計`;
+
+        try {
+            const response = await fetch(`/api/daily_stats?date=${dateStr}`);
+            const result = await response.json();
+
+            if (result.data) {
+                birdChart.data.datasets[0].data = result.data;
+                birdChart.update('none'); // 'none' 參數可以讓圖表更新時不要有太誇張的動畫
+
+                // [新增] 自動找出當天數量最多的那個小時並顯示照片
+                const maxCount = Math.max(...result.data);
+                if (maxCount > 0) {
+                    // 找到最大值的索引 (小時)
+                    const maxHour = result.data.indexOf(maxCount);
+                    // 自動載入那張照片
+                    // 只有在「非手動模式」下，才允許自動切換圖片
+                    if (!isManualSelection && (dateStr !== lastDateStr || maxHour !== lastMaxHour || maxCount > lastMaxCount)) {
+                        console.log("偵測到數據更新，刷新圖片...");
+                        loadImage(maxHour, maxCount);
+
+                        // 更新狀態紀錄
+                        lastMaxHour = maxHour;
+                        lastMaxCount = maxCount;
+                        lastDateStr = dateStr;
+                    }
+                } else {
+                    // 如果當天完全沒數據
+                    if (lastMaxCount !== 0) {
+                        recordImage.style.display = 'none';
+                        noImageText.style.display = 'block';
+                        noImageText.innerText = "( 今日尚無數據 )";
+                        lastMaxCount = 0;
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("獲取數據失敗:", error);
+        }
+    }
+
+    // 4. 事件監聽器 (邏輯不變)
+    btnPrev.addEventListener('click', () => {
+        currentDate.setDate(currentDate.getDate() - 1);
+        lastDateStr = ""; // 重置日期紀錄，確保圖片會更新
+        isManualSelection = false; // 切換日期後，重置為自動模式
+        updateDatePicker();
+        fetchDailyData();
+    });
+
+    btnNext.addEventListener('click', () => {
+        currentDate.setDate(currentDate.getDate() + 1);
+        lastDateStr = "";
+        isManualSelection = false;
+        updateDatePicker();
+        fetchDailyData();
+    });
+
+    btnToday.addEventListener('click', () => {
+        currentDate = new Date();
+        lastDateStr = "";
+        isManualSelection = false;
+        updateDatePicker();
+        fetchDailyData();
+    });
+
+    datePicker.addEventListener('change', (e) => {
+        if (e.target.value) {
+            currentDate = new Date(e.target.value);
+            lastDateStr = "";
+            isManualSelection = false;  
+            fetchDailyData();
+        }
+    });
+
+    // 啟動
+    fetchDailyData();
+
+    // 自動刷新 (僅限今天)
+    setInterval(() => {
+        const todayStr = formatDate(new Date());
+        const currentStr = formatDate(currentDate);
+        if (todayStr === currentStr) {
+            fetchDailyData();
+        }
+    }, 10000);
+});
 
 setInterval(updateData, 10000);
 updateData();

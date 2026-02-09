@@ -1,4 +1,5 @@
-html, body {
+html,
+body {
     height: 100%;
     margin: 0;
     padding: 0;
@@ -84,7 +85,8 @@ h2 {
     color: black;
 }
 
-p, address {
+p,
+address {
     max-width: 900px;
     margin: 5px auto;
     padding: 0 20px;
@@ -95,7 +97,7 @@ img {
     display: block;
     margin: 5px auto;
     border-radius: 18px;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+    /* box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15); */
     max-width: 100%;
     height: auto;
 }
@@ -209,13 +211,16 @@ main.content {
     flex-direction: column;
 }
 
-#temperature, #humidity, #timestamp {
+#temperature,
+#humidity,
+#timestamp {
     font-size: 24px;
     color: rgb(0, 0, 0);
+    background-color: rgb(230, 125, 153);
 }
 
 #raspberry {
-    font-size: 20px;
+    font-size: 26px;
 }
 
 #main-container {
@@ -234,11 +239,12 @@ main.content {
 }
 
 #control_section {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    /* display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); */
     gap: 10px;
     width: 100%;
     padding: 0;
+    border: none;
 }
 
 #control_section_left,
@@ -248,7 +254,7 @@ main.content {
 
 #rtsp_test,
 #rtsp_test_2 {
-    border-radius: 4px;
+    border-radius: 0px;
     width: 100%;
     height: auto;
     object-fit: contain;
@@ -256,6 +262,35 @@ main.content {
 }
 
 #sensor-section {
+    width: 100%;
+}
+
+#chart-section {
+    width: 100%;
+    margin: 0 auto;
+    background: white;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+#chart-controls {
+    margin: 20px 0;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    align-items: center;
+}
+
+input[type="date"] {
+    padding: 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.chart-box {
+    position: relative;
+    height: 400px;
     width: 100%;
 }
 
@@ -304,7 +339,7 @@ main.content {
     #rtsp_test_2 {
         width: 100%;
         height: auto;
-        max-height: 500px;
+        max-height: 800px;
         object-fit: contain;
     }
 }
@@ -353,7 +388,8 @@ main.content {
         margin-top: 20px;
     }
 
-    p, address {
+    p,
+    address {
         padding: 0 15px;
     }
 
@@ -369,7 +405,9 @@ main.content {
         max-width: 100%;
     }
 
-    #temperature, #humidity, #timestamp {
+    #temperature,
+    #humidity,
+    #timestamp {
         font-size: 18px;
     }
 
@@ -444,7 +482,9 @@ main.content {
         margin-top: 30px;
     }
 
-    #temperature, #humidity, #timestamp {
+    #temperature,
+    #humidity,
+    #timestamp {
         font-size: 20px;
     }
 
