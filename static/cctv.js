@@ -7,6 +7,109 @@ async function updateData() {
     time.innerText = data.timestamp ?? "--";
 }
 
+// ========== YOLO 識別結果更新 ==========
+async function updateDetectionImage(cameraId) {
+    try {
+        const statusElement = document.getElementById(`detection${cameraId === 'cam1' ? '1' : '2'}_status`);
+        const imgElement = document.getElementById(`detection_image_cam${cameraId === 'cam1' ? '1' : '2'}`);
+        const placeholderElement = document.getElementById(`detection${cameraId === 'cam1' ? '1' : '2'}_placeholder`);
+        
+        // 獲取識別信息
+        const infoResponse = await fetch(`/api/detection_info/${cameraId}`);
+        const info = await infoResponse.json();
+        
+        if (info.has_result) {
+            const lastDetection = new Date(info.last_detection);
+            const nextIn = Math.ceil(info.next_detection_in);
+            statusElement.textContent = `最後識別時間: ${lastDetection.toLocaleTimeString('zh-TW')} (下次識別: ${nextIn}秒後)`;
+            
+            // 獲取識別圖像
+            const imgResponse = await fetch(`/api/detection_image/${cameraId}`);
+            if (imgResponse.ok) {
+                const blob = await imgResponse.blob();
+                const url = URL.createObjectURL(blob);
+                imgElement.src = url;
+                imgElement.style.display = 'block';
+                placeholderElement.style.display = 'none';
+            }
+        } else {
+            statusElement.textContent = '等待第一次識別結果...';
+        }
+    } catch (error) {
+        console.error(`更新${cameraId}識別結果失敗:`, error);
+    }
+}
+
+// 每10秒更新一次識別結果（間隔不要太短，因為識別是每60秒執行一次）
+setInterval(() => {
+    updateDetectionImage('cam1');
+    updateDetectionImage('cam2');
+}, 10000);
+
+// 初始化時立即更新一次
+updateDetectionImage('cam1');
+updateDetectionImage('cam2');
+
+// ========== 手動識別功能 ==========
+async function manualDetect(cameraId) {
+    const buttonId = `manualDetect_cam${cameraId === 'cam1' ? '1' : '2'}`;
+    const statusId = `detection${cameraId === 'cam1' ? '1' : '2'}_status`;
+    const imgId = `detection_image_cam${cameraId === 'cam1' ? '1' : '2'}`;
+    const placeholderId = `detection${cameraId === 'cam1' ? '1' : '2'}_placeholder`;
+    
+    const button = document.getElementById(buttonId);
+    const statusElement = document.getElementById(statusId);
+    const originalText = button.textContent;
+    
+    try {
+        button.disabled = true;
+        button.textContent = '識別中...';
+        statusElement.textContent = '正在執行識別...';
+        
+        const response = await fetch(`/api/manual_detect/${cameraId}`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            statusElement.textContent = `識別失敗: ${error.error}`;
+            return;
+        }
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            // 更新圖像
+            const imgElement = document.getElementById(imgId);
+            const placeholderElement = document.getElementById(placeholderId);
+            
+            imgElement.src = 'data:image/jpeg;base64,' + data.image;
+            imgElement.style.display = 'block';
+            placeholderElement.style.display = 'none';
+            
+            const detectionTime = new Date(data.timestamp);
+            statusElement.textContent = `識別完成: 發現 ${data.bird_count} 隻鳥 | ${detectionTime.toLocaleTimeString('zh-TW')}`;
+        }
+        
+    } catch (error) {
+        statusElement.textContent = `錯誤: ${error.message}`;
+    } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+    }
+}
+
+// 綁定手動識別按鈕事件
+const manualDetectBtn1 = document.getElementById('manualDetect_cam1');
+const manualDetectBtn2 = document.getElementById('manualDetect_cam2');
+
+if (manualDetectBtn1) {
+    manualDetectBtn1.addEventListener('click', () => manualDetect('cam1'));
+}
+if (manualDetectBtn2) {
+    manualDetectBtn2.addEventListener('click', () => manualDetect('cam2'));
+}
+
 document.getElementById("rtsp_test").src = "/video_feed/cam1?t=" + Date.now();
 document.getElementById("rtsp_test_2").src = "/video_feed/cam2?t=" + Date.now();
 

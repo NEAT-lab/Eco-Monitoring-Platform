@@ -69,6 +69,10 @@ class CameraStream:
         self.frame_bytes = None
         self.lock = threading.Lock()
         self.stopped = False
+        self.last_detection_time = 0  # 上次識別的時間
+        self.detection_interval = 60  # 識別間隔（秒）
+        self.latest_detection_frame = None  # 保存最新的識別結果
+        self.current_frame = None  # 保存最新的視頻幀用於手動識別
         
         # 啟動背景執行緒
         self.thread = threading.Thread(target=self.update, args=())
@@ -90,7 +94,7 @@ class CameraStream:
 
             print(f" [Stream-{self.camera_name}] Connected.")
             prev_frame_time = time.time()
-            fps_list = deque(maxlen=60)
+            fps_list = deque(maxlen=240)
             
             while not self.stopped:
                 success, frame = cap.read()
@@ -99,27 +103,35 @@ class CameraStream:
                     break 
 
                 try:
-                    # --- YOLO 推論邏輯 ---
-                    # 注意：如果兩台攝影機同時跑，GPU/CPU 負載會加倍
-                    results = generate_frames_model(frame, verbose=False)
-                    
+                    # 複製一份用於繪製邊框
                     bird_frame = frame.copy()
                     bird_count = 0
                     
-                    if results:
-                        for box in results[0].boxes:
-                            class_id = int(box.cls)
-                            if hasattr(generate_frames_model, 'names'):
-                                class_name = generate_frames_model.names[class_id]
-                                if class_name.lower() == 'bird':
-                                    bird_count += 1
-                                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                                    cv2.rectangle(bird_frame, (x1, y1), (x2, y2), (255, 0, 0), 3)
-                                    cv2.putText(bird_frame, 'bird', (x1, y1 - 10),
-                                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)
-                    
-                    # 更新統計 (建議 update_hourly_max 函式內也要加 Lock 避免兩台同時寫入衝突)
-                    update_hourly_max(bird_count, bird_frame)
+                    # --- YOLO 推論邏輯（每60秒執行一次） ---
+                    current_time = time.time()
+                    if current_time - self.last_detection_time >= self.detection_interval:
+                        # 執行YOLO推論
+                        results = generate_frames_model(frame, verbose=False)
+                        self.last_detection_time = current_time
+                        
+                        if results:
+                            for box in results[0].boxes:
+                                class_id = int(box.cls)
+                                if hasattr(generate_frames_model, 'names'):
+                                    class_name = generate_frames_model.names[class_id]
+                                    if class_name.lower() == 'bird':
+                                        bird_count += 1
+                                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                                        cv2.rectangle(bird_frame, (x1, y1), (x2, y2), (255, 0, 0), 3)
+                                        cv2.putText(bird_frame, 'bird', (x1, y1 - 10),
+                                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)
+                        
+                        # 更新統計 (建議 update_hourly_max 函式內也要加 Lock 避免兩台同時寫入衝突)
+                        update_hourly_max(bird_count, bird_frame)
+                        
+                        # 保存最新的識別結果
+                        with self.lock:
+                            self.latest_detection_frame = bird_frame.copy()
                     
                     # 計算 FPS
                     current_time = time.time()
@@ -149,6 +161,7 @@ class CameraStream:
                     if ret:
                         with self.lock:
                             self.frame_bytes = buffer.tobytes()
+                            self.current_frame = frame.copy()  # 保存原始幀用於手動識別
                             
                 except Exception as e:
                     print(f" [Stream-{self.camera_name}] Error: {e}")
@@ -159,6 +172,52 @@ class CameraStream:
     def get_frame(self):
         with self.lock:
             return self.frame_bytes
+    
+    def get_detection_frame(self):
+        """獲取最新的識別結果圖像"""
+        with self.lock:
+            return self.latest_detection_frame
+    
+    def manual_detect(self):
+        """
+        手動識別：立即執行 YOLO 推論（不受60秒間隔限制）
+        返回識別結果和識別圖像
+        """
+        with self.lock:
+            if self.current_frame is None:
+                return None, "No frame available"
+            
+            frame = self.current_frame.copy()
+        
+        try:
+            # 執行 YOLO 推論
+            results = generate_frames_model(frame, verbose=False)
+            
+            bird_frame = frame.copy()
+            bird_count = 0
+            
+            if results:
+                for box in results[0].boxes:
+                    class_id = int(box.cls)
+                    if hasattr(generate_frames_model, 'names'):
+                        class_name = generate_frames_model.names[class_id]
+                        if class_name.lower() == 'bird':
+                            bird_count += 1
+                            x1, y1, x2, y2 = map(int, box.xyxy[0])
+                            cv2.rectangle(bird_frame, (x1, y1), (x2, y2), (255, 0, 0), 3)
+                            cv2.putText(bird_frame, 'bird', (x1, y1 - 10),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)
+            
+            # 更新最新識別結果並重設計時器
+            with self.lock:
+                self.latest_detection_frame = bird_frame.copy()
+                self.last_detection_time = time.time()
+            
+            return bird_frame, bird_count
+            
+        except Exception as e:
+            print(f"Manual detection error: {e}")
+            return None, f"Detection error: {str(e)}"
 
 def generate_frames(camera_id):
     """
@@ -477,6 +536,84 @@ def video_feed(camera_id):
         
     return Response(generate_frames(camera_id),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/api/detection_image/<camera_id>')
+def detection_image(camera_id):
+    """
+    API: 返回指定攝影機最新的YOLO識別結果（靜態圖像）
+    例如: /api/detection_image/cam1
+    """
+    if camera_id not in streams:
+        return jsonify({"error": "Camera not found"}), 404
+    
+    detection_frame = streams[camera_id].get_detection_frame()
+    
+    if detection_frame is None:
+        # 如果還沒有識別結果，返回空圖像
+        return jsonify({"error": "No detection result yet"}), 204
+    
+    # 編碼為JPEG
+    ret, buffer = cv2.imencode('.jpg', detection_frame)
+    if ret:
+        return Response(buffer.tobytes(), mimetype='image/jpeg')
+    else:
+        return jsonify({"error": "Failed to encode image"}), 500
+    
+@app.route('/api/detection_info/<camera_id>')
+def detection_info(camera_id):
+    """
+    API: 返回指定攝影機最新的識別信息（JSON）
+    """
+    if camera_id not in streams:
+        return jsonify({"error": "Camera not found"}), 404
+    
+    stream = streams[camera_id]
+    detection_frame = stream.get_detection_frame()
+    
+    if detection_frame is None:
+        return jsonify({
+            "camera": camera_id,
+            "has_result": False,
+            "last_detection": None
+        })
+    
+    return jsonify({
+        "camera": camera_id,
+        "has_result": True,
+        "last_detection": datetime.fromtimestamp(stream.last_detection_time).isoformat(),
+        "next_detection_in": max(0, stream.detection_interval - (time.time() - stream.last_detection_time))
+    })
+
+@app.route('/api/manual_detect/<camera_id>', methods=['POST'])
+def manual_detect(camera_id):
+    """
+    API: 手動觸發指定攝影機的 YOLO 識別
+    立即執行識別，不受60秒間隔限制
+    """
+    if camera_id not in streams:
+        return jsonify({"error": "Camera not found"}), 404
+    
+    stream = streams[camera_id]
+    detection_frame, bird_count = stream.manual_detect()
+    
+    if detection_frame is None:
+        return jsonify({"error": bird_count}), 500
+    
+    # 編碼識別結果圖像
+    ret, buffer = cv2.imencode('.jpg', detection_frame)
+    if not ret:
+        return jsonify({"error": "Failed to encode image"}), 500
+    
+    # 返回 base64 編碼的圖像
+    img_base64 = base64.b64encode(buffer).decode("utf-8")
+    
+    return jsonify({
+        "status": "success",
+        "camera": camera_id,
+        "bird_count": bird_count,
+        "image": img_base64,
+        "timestamp": datetime.now().isoformat()
+    })
     
 @app.route('/api/get_zoom', methods=['GET'])
 def get_zoom():
