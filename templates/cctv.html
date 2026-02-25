@@ -27,21 +27,20 @@
 
     <div id="main-container">
         <div id="video-section">
-            <h2>rtsp 環境監測</h2>
+            <h2>即時環境監測</h2>
             <div id="control_section">
                 <div id="control_section_left">
-                    <img id="rtsp_test" src="/video_feed_1" alt="RTSP Feed 1">
-                    <h2>左攝影機控制</h2>
-                    <div>
+                    <h3>Camera 1</h3>
+                    <div id="zoom_control">
                         <label>Zoom: <span id="zoomDisplay">----</span></label>
-                        <input type="range" id="zoomSlider" min="0" max="9999" value="2479">
+                        <input type="range" id="zoomSlider" min="1" max="9999" value="">
                         <div id="zoomStatus">就緒</div>
                     </div>
+                    <img id="rtsp_test" alt="RTSP Feed 1">
                 </div>
                 <div id="control_section_right">
-                    <img id="rtsp_test_2" src="/video_feed_2" alt="RTSP Feed 2">
-                    <h2>右攝影機控制</h2>
-                    <div>
+                    <h3>Camera 2</h3>
+                    <div id="camera2_controls">                        
                         <div id="direction-control">
                             <button id="upBtn">上</button>
                             <button id="downBtn">下</button>
@@ -49,15 +48,17 @@
                             <button id="rightBtn">右</button>
                             <div id="directionStatus">就緒</div>
                         </div>
-                        <div>
+                        <div id="zoom_control_2">
                             <label>Zoom: <span id="zoomDisplay_2">----</span></label>
-                            <input type="range" id="zoomSlider_2" min="0" max="9999" value="2479">
+                            <input type="range" id="zoomSlider_2" min="1" max="9999" value="">
                             <div id="zoomStatus_2">就緒</div>
-                        </div>
+                        </div>                        
                     </div>
+                    <img id="rtsp_test_2" alt="RTSP Feed 2">
                 </div>
             </div>
         </div>
+        <h3>鳥類活動統計</h3>
         <div id="chart-section">
             <!-- 日期控制列 -->
             <div id="chart-controls">
@@ -81,7 +82,7 @@
             </div>
         </div>
         <main id="sensor-section">
-            <h2 id="raspberry">neat raspberry 溫溼度監測</h2>
+            <h3 id="raspberry">neat raspberry 溫溼度監測</h3>
 
             <div id="temperature" class="upload-box">溫度：<span id="temp">--</span> °C</div>
             <div id="humidity" class="upload-box">濕度：<span id="hum">--</span> %</div>

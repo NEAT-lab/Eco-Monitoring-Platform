@@ -13,6 +13,8 @@ import requests
 import urllib3
 import sqlite3
 from datetime import datetime
+import threading
+from collections import deque
 
 DB_NAME = 'cctv.db'
 
@@ -60,63 +62,124 @@ def to_mp4(input_path, output_path=None):
     return output_path
 
 generate_frames_model = YOLO("pt/yolo11x.pt")
-def generate_frames(rtsp_url):
-    while True:
-        cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-        if not cap.isOpened():
-            print(" RTSP open failed, retrying in 3s...")
-            time.sleep(3)
-            continue
-
-        prev_frame_time = 0
+class CameraStream:
+    def __init__(self, rtsp_url, camera_name):
+        self.rtsp_url = rtsp_url
+        self.camera_name = camera_name # 用於辨識是哪一台攝影機
+        self.frame_bytes = None
+        self.lock = threading.Lock()
+        self.stopped = False
         
-        while True:
-            success, frame = cap.read()
-            if not success:
-                print(" Frame read failed, reconnecting...")
-                cap.release()
-                break
+        # 啟動背景執行緒
+        self.thread = threading.Thread(target=self.update, args=())
+        self.thread.daemon = True 
+        self.thread.start()
 
-            results = generate_frames_model(frame, verbose=False)
+    def update(self):
+        """
+        生產者：每一台攝影機都有自己獨立的 update 迴圈
+        """
+        print(f" [Stream-{self.camera_name}] Background thread started.")
+        while not self.stopped:
+            cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
             
-            # 只保留 bird 類別的框
-            bird_frame = frame.copy()
-            bird_count = 0
+            if not cap.isOpened():
+                print(f" [Stream-{self.camera_name}] RTSP failed. Retrying in 3s...")
+                time.sleep(3)
+                continue
+
+            print(f" [Stream-{self.camera_name}] Connected.")
+            prev_frame_time = time.time()
+            fps_list = deque(maxlen=60)
             
-            for box in results[0].boxes:
-                class_id = int(box.cls)
-                class_name = generate_frames_model.names[class_id]
-                
-                if class_name.lower() == 'bird':  # 只框 bird
-                    bird_count += 1
-                    # 繪製邊框
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    cv2.rectangle(bird_frame, (x1, y1), (x2, y2), (255, 0, 0), 3)
-                    # 標籤
-                    cv2.putText(bird_frame, 'bird', (x1, y1 - 10),
-                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)
+            while not self.stopped:
+                success, frame = cap.read()
+                if not success:
+                    print(f" [Stream-{self.camera_name}] Read failed, reconnecting...")
+                    break 
+
+                try:
+                    # --- YOLO 推論邏輯 ---
+                    # 注意：如果兩台攝影機同時跑，GPU/CPU 負載會加倍
+                    results = generate_frames_model(frame, verbose=False)
+                    
+                    bird_frame = frame.copy()
+                    bird_count = 0
+                    
+                    if results:
+                        for box in results[0].boxes:
+                            class_id = int(box.cls)
+                            if hasattr(generate_frames_model, 'names'):
+                                class_name = generate_frames_model.names[class_id]
+                                if class_name.lower() == 'bird':
+                                    bird_count += 1
+                                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                                    cv2.rectangle(bird_frame, (x1, y1), (x2, y2), (255, 0, 0), 3)
+                                    cv2.putText(bird_frame, 'bird', (x1, y1 - 10),
+                                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)
+                    
+                    # 更新統計 (建議 update_hourly_max 函式內也要加 Lock 避免兩台同時寫入衝突)
+                    update_hourly_max(bird_count, bird_frame)
+                    
+                    # 計算 FPS
+                    current_time = time.time()
+                    time_diff = current_time - prev_frame_time
+                    fps =  1 / time_diff if time_diff > 0 else 0
+                    fps_list.append(fps)
+                    smooth_fps = sum(fps_list) / len(fps_list)
+                    prev_frame_time = current_time
+                    
+                    height, width = bird_frame.shape[:2]
+                    font_scale = width / 1400  # 或者 width / 800、width / 1200 等，自己調整
+                    thickness = int(width / 500)  # 字體線寬也跟著調整
+
+                    cv2.putText(bird_frame, f"cam : {self.camera_name}", 
+                                (10, int(0.08*height)), cv2.FONT_HERSHEY_SIMPLEX, 
+                                font_scale, (0, 255, 255), thickness)
+                    cv2.putText(bird_frame, f"fps  : {smooth_fps:.1f}", 
+                                (10, int(0.13*height)), cv2.FONT_HERSHEY_SIMPLEX, 
+                                font_scale, (255, 0, 0), thickness)                    
+                    cv2.putText(bird_frame, f"birds : {bird_count}", 
+                                (10, int(0.18*height)), cv2.FONT_HERSHEY_SIMPLEX, 
+                                font_scale, (0, 255, 0), thickness)
+
+                    
+                    # 編碼
+                    ret, buffer = cv2.imencode('.jpg', bird_frame)
+                    if ret:
+                        with self.lock:
+                            self.frame_bytes = buffer.tobytes()
+                            
+                except Exception as e:
+                    print(f" [Stream-{self.camera_name}] Error: {e}")
+                    pass
             
-            update_hourly_max(bird_count, bird_frame)
+            cap.release()
+
+    def get_frame(self):
+        with self.lock:
+            return self.frame_bytes
+
+def generate_frames(camera_id):
+    """
+    生成器現在接收 camera_id 參數
+    """
+    if camera_id not in streams:
+        return None
+
+    active_stream = streams[camera_id]
+    
+    while True:
+        frame = active_stream.get_frame()
+        
+        if frame is None:
+            time.sleep(0.1)
+            continue
             
-            # 計算 FPS
-            current_time = time.time()
-            fps = 1 / (current_time - prev_frame_time) if (current_time - prev_frame_time) > 0 else 0
-            prev_frame_time = current_time
-            
-            # 顯示 bird 總數
-            cv2.putText(bird_frame, f"Birds: {bird_count}", 
-                       (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 
-                       1.5, (0, 255, 0), 2)
-            
-            # 顯示 FPS
-            cv2.putText(bird_frame, f"FPS: {fps:.1f}", 
-                       (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 
-                       1.5, (255, 0, 0), 2)
-            
-            ret, buffer = cv2.imencode('.jpg', bird_frame)
-            frame_bytes = buffer.tobytes()
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        time.sleep(0.03) # 限制傳輸 FPS
+        
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
 
 IMAGE_FOLDER = os.path.join("static", "captures")
@@ -187,8 +250,21 @@ models_list = [YOLO(os.path.join(MODEL_FOLDER, f)) for f in available_models]
 models = {os.path.join(MODEL_FOLDER, f): m for f, m in zip(available_models, models_list)}
 
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-rtsp_url_1 = "rtsp://root:pass@145.245.74.49:9664/axis-media/media.amp"
-rtsp_url_2 = "rtsp://root:pass@145.245.74.49:9666/axis-media/media.amp"
+rtsp_url_1 = "rtsp://root:pass@221.120.74.49:9664/axis-media/media.amp"
+rtsp_url_2 = "rtsp://root:pass@221.120.74.49:9666/axis-media/media.amp"
+# --- 設定多台攝影機 ---
+CAMERAS_CONFIG = {
+    "cam1": rtsp_url_1,
+    "cam2": rtsp_url_2
+}
+
+# 儲存所有串流物件的字典
+streams = {}
+
+# 初始化所有攝影機
+print("Initializing cameras...")
+for cam_name, url in CAMERAS_CONFIG.items():
+    streams[cam_name] = CameraStream(url, cam_name)
 
 # html pages
 @app.route("/")
@@ -390,16 +466,82 @@ def api_panorama():
 def api_data():
     return jsonify(latest_data)
 
-@app.route('/video_feed_1')
-def video_feed_1():
-    return Response(generate_frames(rtsp_url_1),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/video_feed_2')
-def video_feed_2():
-    return Response(generate_frames(rtsp_url_2),
+@app.route('/video_feed/<camera_id>')
+def video_feed(camera_id):
+    """
+    動態路由：根據 URL 的 camera_id 決定回傳哪個串流
+    例如: /video_feed/cam1 或 /video_feed/cam2
+    """
+    if camera_id not in streams:
+        return "Camera not found", 404
+        
+    return Response(generate_frames(camera_id),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
     
+@app.route('/api/get_zoom', methods=['GET'])
+def get_zoom():
+    # 設定攝影機 URL (讀取狀態需使用 query=position)
+    url = f'https://221.120.74.49:9661/axis-cgi/com/ptz.cgi'
+    params = {'query': 'position', 'camera': 1}
+
+    try:
+        # 發送 GET 請求到攝影機
+        response = requests.get(
+            url,
+            params=params,
+            auth=HTTPDigestAuth("root", "pass"),
+            verify=False,
+            timeout=5
+        )
+
+        # 解析回傳的文字資料 (尋找 zoom=...)
+        zoom_value = None
+        for line in response.text.splitlines():
+            if line.startswith('zoom='):
+                zoom_value = line.split('=')[1]
+                break
+        
+        # 根據解析結果回傳 JSON
+        if zoom_value:
+            return jsonify({'status': 'success', 'zoom': zoom_value})
+        else:
+            return jsonify({'error': '找不到 Zoom 數值'}), 500
+
+    except:
+        return jsonify({'error': '無法連接到攝影機'}), 500
+
+@app.route('/api/get_zoom_2', methods=['GET'])
+def get_zoom_2():
+    # 設定攝影機 URL (讀取狀態需使用 query=position)
+    url = f'https://221.120.74.49:9663/axis-cgi/com/ptz.cgi'
+    params = {'query': 'position', 'camera': 1}
+
+    try:
+        # 發送 GET 請求到攝影機
+        response = requests.get(
+            url,
+            params=params,
+            auth=HTTPBasicAuth("root", "pass"),
+            verify=False,
+            timeout=5
+        )
+
+        # 解析回傳的文字資料 (尋找 zoom=...)
+        zoom_value = None
+        for line in response.text.splitlines():
+            if line.startswith('zoom='):
+                zoom_value = line.split('=')[1]
+                break
+        
+        # 根據解析結果回傳 JSON
+        if zoom_value:
+            return jsonify({'status': 'success', 'zoom': zoom_value})
+        else:
+            return jsonify({'error': '找不到 Zoom 數值'}), 500
+
+    except:
+        return jsonify({'error': '無法連接到攝影機'}), 500
+     
 @app.route('/api/zoom', methods=['POST'])
 def zoom():
     # 獲取前端發送的 JSON 數據
@@ -407,7 +549,7 @@ def zoom():
     zoom_value = data.get('zoom')
 
     # 發送命令到攝影機
-    url = f'https://145.245.74.49:9661/axis-cgi/com/ptz.cgi'
+    url = f'https://221.120.74.49:9661/axis-cgi/com/ptz.cgi'
     params = {'zoom': zoom_value, 'camera': 1}
 
     try:
@@ -429,7 +571,7 @@ def zoom_2():
     zoom_value = data.get('zoom')
 
     # 發送命令到攝影機
-    url = f'https://145.245.74.49:9663/axis-cgi/com/ptz.cgi'
+    url = f'https://221.120.74.49:9663/axis-cgi/com/ptz.cgi'
     params = {'zoom': zoom_value, 'camera': 1}
 
     try:
@@ -463,7 +605,7 @@ def direction_2():
         params['pan'] = 45
 
     # 發送命令到攝影機
-    url = f'https://145.245.74.49:9663/axis-cgi/com/ptz.cgi'
+    url = f'https://221.120.74.49:9663/axis-cgi/com/ptz.cgi'
 
     try:
         response = requests.post(

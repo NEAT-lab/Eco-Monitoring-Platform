@@ -7,6 +7,23 @@ async function updateData() {
     time.innerText = data.timestamp ?? "--";
 }
 
+document.getElementById("rtsp_test").src = "/video_feed/cam1?t=" + Date.now();
+document.getElementById("rtsp_test_2").src = "/video_feed/cam2?t=" + Date.now();
+
+fetch('/api/get_zoom')
+  .then(res => res.json())
+  .then(data => {
+      document.getElementById('zoomDisplay').innerText = data.zoom;
+      document.getElementById('zoomSlider').value = data.zoom;
+  });
+
+fetch('/api/get_zoom_2')
+  .then(res => res.json())
+  .then(data => {
+      document.getElementById('zoomDisplay_2').innerText = data.zoom;
+      document.getElementById('zoomSlider_2').value = data.zoom;
+  });
+
 // ========== 左攝影機控制 ==========
 const zoomSlider = document.getElementById('zoomSlider');
 const zoomDisplay = document.getElementById('zoomDisplay');
@@ -57,32 +74,32 @@ const directionBtns = {
 };
 const directionStatus = document.getElementById('directionStatus');
 
-directionBtns.up.addEventListener('click', () => sendDirection('up'));
-directionBtns.down.addEventListener('click', () => sendDirection('down'));
-directionBtns.left.addEventListener('click', () => sendDirection('left'));
-directionBtns.right.addEventListener('click', () => sendDirection('right'));
+// directionBtns.up.addEventListener('click', () => sendDirection('up'));
+// directionBtns.down.addEventListener('click', () => sendDirection('down'));
+// directionBtns.left.addEventListener('click', () => sendDirection('left'));
+// directionBtns.right.addEventListener('click', () => sendDirection('right'));
 
-async function sendDirection(direction) {
-    try {
-        directionStatus.textContent = '發送中...';
+// async function sendDirection(direction) {
+//     try {
+//         directionStatus.textContent = '發送中...';
 
-        const response = await fetch('/api/direction_2', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ direction: direction })
-        });
+//         const response = await fetch('/api/direction_2', {
+//             method: 'POST',
+//             headers: {
+//                 'Content-Type': 'application/json'
+//             },
+//             body: JSON.stringify({ direction: direction })
+//         });
 
-        if (response.ok) {
-            directionStatus.textContent = '成功';
-        } else {
-            directionStatus.textContent = '錯誤';
-        }
-    } catch (error) {
-        directionStatus.textContent = '錯誤: ' + error.message;
-    }
-}
+//         if (response.ok) {
+//             directionStatus.textContent = '成功';
+//         } else {
+//             directionStatus.textContent = '錯誤';
+//         }
+//     } catch (error) {
+//         directionStatus.textContent = '錯誤: ' + error.message;
+//     }
+// }
 
 // ==== 右攝影機變焦控制 ====
 const zoomSlider_2 = document.getElementById('zoomSlider_2');
@@ -327,5 +344,5 @@ document.addEventListener("DOMContentLoaded", function () {
     }, 10000);
 });
 
-setInterval(updateData, 10000);
+setInterval(updateData, 60000);
 updateData();
