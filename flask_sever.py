@@ -74,6 +74,11 @@ class CameraStream:
         self.latest_detection_frame = None  # 保存最新的識別結果
         self.current_frame = None  # 保存最新的視頻幀用於手動識別
         
+        # 資料集收集相關
+        self.last_dataset_save_time = time.time()  # 上次保存的時間
+        self.dataset_save_interval = 180  # 每180秒保存一次（每小時20張）
+        self.dataset_folder = "dataset"  # 資料集主文件夾
+        
         # 啟動背景執行緒
         self.thread = threading.Thread(target=self.update, args=())
         self.thread.daemon = True 
@@ -162,6 +167,12 @@ class CameraStream:
                         with self.lock:
                             self.frame_bytes = buffer.tobytes()
                             self.current_frame = frame.copy()  # 保存原始幀用於手動識別
+                        
+                        # 資料集收集：每180秒保存一次原始幀（每小時20張）
+                        current_time = time.time()
+                        if current_time - self.last_dataset_save_time >= self.dataset_save_interval:
+                            self.save_dataset_frame(frame)
+                            self.last_dataset_save_time = current_time
                             
                 except Exception as e:
                     print(f" [Stream-{self.camera_name}] Error: {e}")
@@ -178,6 +189,28 @@ class CameraStream:
         with self.lock:
             return self.latest_detection_frame
     
+    def save_dataset_frame(self, frame):
+        """
+        保存幀到 dataset 文件夾
+        文件名格式: camera_YYYY_MM_DD_HH_MM.jpg
+        """
+        try:
+            now = datetime.now()
+            
+            # 創建 dataset 文件夾
+            os.makedirs(self.dataset_folder, exist_ok=True)
+            
+            # 生成文件名：camera_YYYY_MM_DD_HH_MM.jpg
+            filename = f"{self.camera_name}_{now.strftime('%Y_%m_%d_%H_%M')}.jpg"
+            file_path = os.path.join(self.dataset_folder, filename)
+            
+            # 保存圖像
+            cv2.imwrite(file_path, frame)
+            print(f"[Dataset] 已保存: {file_path}")
+            
+        except Exception as e:
+            print(f"[Dataset] 保存失敗 [{self.camera_name}]: {e}")   
+            
     def manual_detect(self):
         """
         手動識別：立即執行 YOLO 推論（不受60秒間隔限制）
