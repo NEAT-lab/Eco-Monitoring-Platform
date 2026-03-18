@@ -1,6 +1,6 @@
 from flask import Flask, request, render_template, jsonify, send_from_directory, Response
 import os
-from ultralytics import YOLO
+from ultralytics import YOLO, RTDETR
 import cv2
 import subprocess
 import numpy as np
@@ -61,7 +61,7 @@ def to_mp4(input_path, output_path=None):
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return output_path
 
-generate_frames_model = YOLO("pt/yolo11x.pt")
+generate_frames_model = RTDETR("/home/neat/Ron/Eco-Monitoring-Platform/runs/detect/train/weights/best.pt")
 class CameraStream:
     def __init__(self, rtsp_url, camera_name):
         self.rtsp_url = rtsp_url
@@ -76,7 +76,7 @@ class CameraStream:
         
         # 資料集收集相關
         self.last_dataset_save_time = time.time()  # 上次保存的時間
-        self.dataset_save_interval = 180  # 每180秒保存一次（每小時20張）
+        self.dataset_save_interval = 720  # 每180秒保存一次（每小時20張）
         self.dataset_folder = "dataset"  # 資料集主文件夾
         
         # 啟動背景執行緒
@@ -116,27 +116,64 @@ class CameraStream:
                     current_time = time.time()
                     if current_time - self.last_detection_time >= self.detection_interval:
                         # 執行YOLO推論
-                        results = generate_frames_model(frame, verbose=False)
                         self.last_detection_time = current_time
-                        
-                        if results:
-                            for box in results[0].boxes:
-                                class_id = int(box.cls)
-                                if hasattr(generate_frames_model, 'names'):
-                                    class_name = generate_frames_model.names[class_id]
-                                    if class_name.lower() == 'bird':
-                                        bird_count += 1
-                                        x1, y1, x2, y2 = map(int, box.xyxy[0])
-                                        cv2.rectangle(bird_frame, (x1, y1), (x2, y2), (255, 0, 0), 3)
-                                        cv2.putText(bird_frame, 'bird', (x1, y1 - 10),
-                                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)
-                        
-                        # 更新統計 (建議 update_hourly_max 函式內也要加 Lock 避免兩台同時寫入衝突)
-                        update_hourly_max(bird_count, bird_frame)
-                        
-                        # 保存最新的識別結果
-                        with self.lock:
-                            self.latest_detection_frame = bird_frame.copy()
+                    
+                    results = generate_frames_model.track(frame, conf=0.3, iou=0.5, tracker="bytetrack.yaml", persist=True, verbose=False)              
+                    # 定義每個類別的顏色（BGR）
+                    colors = {
+                        0: (255, 0, 0),      # Anatidae - 
+                        1: (231, 224, 87),      # Ardea_cinerea - 
+                        2: (29, 147, 123),      # Turtle - 
+                    }
+
+                    thickness = 3  # 邊框粗細
+
+                    if results:
+                        for r in results:
+                            # 確保這一幀有偵測到東西且有追蹤資訊
+                            if r.boxes is not None and r.boxes.is_track:
+                                for box in r.boxes:
+                                    bird_count += 1
+                                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                                    conf = box.conf[0]
+                                    cls = int(box.cls[0])
+                                    label = generate_frames_model.names[cls]
+                                    
+                                    # --- 新增：提取追蹤 ID ---
+                                    track_id = int(box.id[0]) if box.id is not None else "N/A"
+                                    
+                                    color = colors.get(cls, (0, 255, 255))
+                                    cv2.rectangle(bird_frame, (x1, y1), (x2, y2), color, thickness)
+
+                                    # --- 修改：將 ID 加入文字中 ---
+                                    # 格式改為 "ID: 1 Bird 0.85"
+                                    text = f"ID:{track_id} {label} {conf:.2f}"
+                                    
+                                    font = cv2.FONT_HERSHEY_SIMPLEX
+                                    font_scale = 0.8
+                                    font_thickness = 2 # 稍微調細一點點，字才不會糊在一起
+                                    (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, font_thickness)
+
+                                    # 畫純色填滿背景 (稍微往上移避免擋住框)
+                                    cv2.rectangle(
+                                        bird_frame,
+                                        (x1, y1 - text_h - baseline - 10),
+                                        (x1 + text_w, y1),
+                                        color,
+                                        cv2.FILLED
+                                    )
+
+                                    # 畫文字
+                                    cv2.putText(
+                                        bird_frame, text,
+                                        (x1, y1 - 10), font, font_scale, (255, 255, 255), font_thickness
+                                    )
+                    # 更新統計 (建議 update_hourly_max 函式內也要加 Lock 避免兩台同時寫入衝突)
+                    update_hourly_max(bird_count, bird_frame)
+                    
+                    # 保存最新的識別結果
+                    with self.lock:
+                        self.latest_detection_frame = bird_frame.copy()
                     
                     # 計算 FPS
                     current_time = time.time()

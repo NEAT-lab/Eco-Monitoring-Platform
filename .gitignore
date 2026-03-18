@@ -13,3 +13,5 @@ Ron/
 *jpg
 *.jpeg
 *.out
+runs/
+test_model/
