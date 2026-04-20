@@ -61,7 +61,17 @@ def to_mp4(input_path, output_path=None):
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return output_path
 
-generate_frames_model = RTDETR("/home/neat/Ron/Eco-Monitoring-Platform/runs/detect/train/weights/best.pt")
+generate_frames_model_light = RTDETR("/home/neat/Ron_train/comparison/gradcam/MANUAL_SAVE_sec_01752.pt")
+generate_frames_model_night = RTDETR("pt/rtdetr_night.pt")
+
+def get_current_model():
+    """在夜間使用夜間模型，白天使用標準模型。"""
+    hour = datetime.now().hour
+    # 20:00~05:59 走夜間模型
+    if hour >= 20 or hour < 6:
+        return generate_frames_model_night
+    return generate_frames_model_light
+
 class CameraStream:
     def __init__(self, rtsp_url, camera_name):
         self.rtsp_url = rtsp_url
@@ -69,14 +79,10 @@ class CameraStream:
         self.frame_bytes = None
         self.lock = threading.Lock()
         self.stopped = False
-        self.last_detection_time = 0  # 上次識別的時間
-        self.detection_interval = 60  # 識別間隔（秒）
-        self.latest_detection_frame = None  # 保存最新的識別結果
-        self.current_frame = None  # 保存最新的視頻幀用於手動識別
         
         # 資料集收集相關
         self.last_dataset_save_time = time.time()  # 上次保存的時間
-        self.dataset_save_interval = 720  # 每180秒保存一次（每小時20張）
+        self.dataset_save_interval = 1440  # 每1440秒保存一次（每小時3張）
         self.dataset_folder = "dataset"  # 資料集主文件夾
         
         # 啟動背景執行緒
@@ -108,105 +114,72 @@ class CameraStream:
                     break 
 
                 try:
-                    # 複製一份用於繪製邊框
-                    bird_frame = frame.copy()
-                    bird_count = 0
+                    model = get_current_model()
+                    results = model.predict(frame, conf=0.4, iou=0.5, verbose=False)
                     
-                    # --- YOLO 推論邏輯（每60秒執行一次） ---
-                    current_time = time.time()
-                    if current_time - self.last_detection_time >= self.detection_interval:
-                        # 執行YOLO推論
-                        self.last_detection_time = current_time
+                    detect_frame = frame.copy()
+                    total_count = 0
+                    counts = {0: 0, 1: 0, 2: 0, 3: 0} # 對應 Anatidae, Ardea_cinerea, Turtle, Nycticorax
                     
-                    results = generate_frames_model.track(frame, conf=0.3, iou=0.5, tracker="bytetrack.yaml", persist=True, verbose=False)              
-                    # 定義每個類別的顏色（BGR）
                     colors = {
-                        0: (255, 0, 0),      # Anatidae - 
-                        1: (231, 224, 87),      # Ardea_cinerea - 
-                        2: (29, 147, 123),      # Turtle - 
+                        0: (255, 0, 0),      # Anatidae
+                        1: (231, 224, 87),   # Ardea_cinerea
+                        2: (29, 147, 123),   # Turtle
+                        3: (255, 0, 255)     # Nycticorax
                     }
 
-                    thickness = 3  # 邊框粗細
+                    if results and results[0].boxes:
+                        for box in results[0].boxes:
+                            total_count += 1
+                            x1, y1, x2, y2 = map(int, box.xyxy[0])
+                            conf, cls = float(box.conf[0]), int(box.cls[0])
+                            
+                            # 更新分類統計
+                            if cls in counts:
+                                counts[cls] += 1
+                            
+                            # 繪製邊框
+                            color = colors.get(cls, (0, 255, 255))
+                            cv2.rectangle(detect_frame, (x1, y1), (x2, y2), color, 2)
 
-                    if results:
-                        for r in results:
-                            # 確保這一幀有偵測到東西且有追蹤資訊
-                            if r.boxes is not None and r.boxes.is_track:
-                                for box in r.boxes:
-                                    bird_count += 1
-                                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                                    conf = box.conf[0]
-                                    cls = int(box.cls[0])
-                                    label = generate_frames_model.names[cls]
-                                    
-                                    # --- 新增：提取追蹤 ID ---
-                                    track_id = int(box.id[0]) if box.id is not None else "N/A"
-                                    
-                                    color = colors.get(cls, (0, 255, 255))
-                                    cv2.rectangle(bird_frame, (x1, y1), (x2, y2), color, thickness)
+                            # 繪製信心度標籤 (含背景)
+                            text = f"{conf:.2f}"
+                            (w, h), b = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+                            cv2.rectangle(detect_frame, (x1, y1 - h - b - 5), (x1 + w, y1), color, -1)
+                            cv2.putText(detect_frame, text, (x1, y1 - 5), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-                                    # --- 修改：將 ID 加入文字中 ---
-                                    # 格式改為 "ID: 1 Bird 0.85"
-                                    text = f"ID:{track_id} {label} {conf:.2f}"
-                                    
-                                    font = cv2.FONT_HERSHEY_SIMPLEX
-                                    font_scale = 0.8
-                                    font_thickness = 2 # 稍微調細一點點，字才不會糊在一起
-                                    (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, font_thickness)
-
-                                    # 畫純色填滿背景 (稍微往上移避免擋住框)
-                                    cv2.rectangle(
-                                        bird_frame,
-                                        (x1, y1 - text_h - baseline - 10),
-                                        (x1 + text_w, y1),
-                                        color,
-                                        cv2.FILLED
-                                    )
-
-                                    # 畫文字
-                                    cv2.putText(
-                                        bird_frame, text,
-                                        (x1, y1 - 10), font, font_scale, (255, 255, 255), font_thickness
-                                    )
-                    # 更新統計 (建議 update_hourly_max 函式內也要加 Lock 避免兩台同時寫入衝突)
-                    update_hourly_max(bird_count, bird_frame)
-                    
-                    # 保存最新的識別結果
-                    with self.lock:
-                        self.latest_detection_frame = bird_frame.copy()
-                    
-                    # 計算 FPS
+                    # 更新統計與 FPS
+                    update_hourly_max(total_count, detect_frame)
                     current_time = time.time()
-                    time_diff = current_time - prev_frame_time
-                    fps =  1 / time_diff if time_diff > 0 else 0
+                    fps = 1 / (current_time - prev_frame_time) if current_time > prev_frame_time else 0
                     fps_list.append(fps)
                     smooth_fps = sum(fps_list) / len(fps_list)
                     prev_frame_time = current_time
                     
-                    height, width = bird_frame.shape[:2]
-                    font_scale = width / 1400  # 或者 width / 800、width / 1200 等，自己調整
-                    thickness = int(width / 500)  # 字體線寬也跟著調整
+                    # 畫面上方資訊顯示 (自動排列)
+                    h, w = detect_frame.shape[:2]
+                    f_scale, thick = w / 1400, max(1, int(w / 500))
+                    info_data = [
+                        (f"cam : {self.camera_name}", (0, 255, 255)),
+                        (f"fps : {smooth_fps:.1f}", (255, 0, 0)),
+                        (f"total : {total_count}", (0, 255, 0)),
+                        (f"Anatidae : {counts[0]}", (255, 0, 0)),
+                        (f"Ardea_cinerea : {counts[1]}", (231, 224, 87)),
+                        (f"Turtle : {counts[2]}", (0, 255, 0)),
+                        (f"Nycticorax : {counts[3]}", (255, 0, 255))
+                    ]
 
-                    cv2.putText(bird_frame, f"cam : {self.camera_name}", 
-                                (10, int(0.08*height)), cv2.FONT_HERSHEY_SIMPLEX, 
-                                font_scale, (0, 255, 255), thickness)
-                    cv2.putText(bird_frame, f"fps  : {smooth_fps:.1f}", 
-                                (10, int(0.13*height)), cv2.FONT_HERSHEY_SIMPLEX, 
-                                font_scale, (255, 0, 0), thickness)                    
-                    cv2.putText(bird_frame, f"birds : {bird_count}", 
-                                (10, int(0.18*height)), cv2.FONT_HERSHEY_SIMPLEX, 
-                                font_scale, (0, 255, 0), thickness)
+                    for i, (txt, clr) in enumerate(info_data):
+                        cv2.putText(detect_frame, txt, (10, int((0.08 + i*0.05) * h)), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, f_scale, clr, thick)
 
-                    
-                    # 編碼
-                    ret, buffer = cv2.imencode('.jpg', bird_frame)
+                    # 編碼與保存
+                    ret, buffer = cv2.imencode('.jpg', detect_frame)
                     if ret:
                         with self.lock:
                             self.frame_bytes = buffer.tobytes()
-                            self.current_frame = frame.copy()  # 保存原始幀用於手動識別
                         
-                        # 資料集收集：每180秒保存一次原始幀（每小時20張）
-                        current_time = time.time()
                         if current_time - self.last_dataset_save_time >= self.dataset_save_interval:
                             self.save_dataset_frame(frame)
                             self.last_dataset_save_time = current_time
@@ -220,11 +193,6 @@ class CameraStream:
     def get_frame(self):
         with self.lock:
             return self.frame_bytes
-    
-    def get_detection_frame(self):
-        """獲取最新的識別結果圖像"""
-        with self.lock:
-            return self.latest_detection_frame
     
     def save_dataset_frame(self, frame):
         """
@@ -248,46 +216,6 @@ class CameraStream:
         except Exception as e:
             print(f"[Dataset] 保存失敗 [{self.camera_name}]: {e}")   
             
-    def manual_detect(self):
-        """
-        手動識別：立即執行 YOLO 推論（不受60秒間隔限制）
-        返回識別結果和識別圖像
-        """
-        with self.lock:
-            if self.current_frame is None:
-                return None, "No frame available"
-            
-            frame = self.current_frame.copy()
-        
-        try:
-            # 執行 YOLO 推論
-            results = generate_frames_model(frame, verbose=False)
-            
-            bird_frame = frame.copy()
-            bird_count = 0
-            
-            if results:
-                for box in results[0].boxes:
-                    class_id = int(box.cls)
-                    if hasattr(generate_frames_model, 'names'):
-                        class_name = generate_frames_model.names[class_id]
-                        if class_name.lower() == 'bird':
-                            bird_count += 1
-                            x1, y1, x2, y2 = map(int, box.xyxy[0])
-                            cv2.rectangle(bird_frame, (x1, y1), (x2, y2), (255, 0, 0), 3)
-                            cv2.putText(bird_frame, 'bird', (x1, y1 - 10),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)
-            
-            # 更新最新識別結果並重設計時器
-            with self.lock:
-                self.latest_detection_frame = bird_frame.copy()
-                self.last_detection_time = time.time()
-            
-            return bird_frame, bird_count
-            
-        except Exception as e:
-            print(f"Manual detection error: {e}")
-            return None, f"Detection error: {str(e)}"
 
 def generate_frames(camera_id):
     """
@@ -315,7 +243,7 @@ IMAGE_FOLDER = os.path.join("static", "captures")
 if not os.path.exists(IMAGE_FOLDER):
     os.makedirs(IMAGE_FOLDER)
 
-def update_hourly_max(current_bird_count, frame):
+def update_hourly_max(current_total_count, frame):
     # 1. 取得當前時間資訊
     now = datetime.now()
     date_str = now.strftime('%Y-%m-%d') # 格式: 2023-10-27
@@ -339,21 +267,21 @@ def update_hourly_max(current_bird_count, frame):
                 # 3. 情況 A: 該小時還沒有任何紀錄 -> 直接新增
                 cursor.execute(
                     'INSERT INTO hourly_max (date, hour, max_count) VALUES (?, ?, ?)', 
-                    (date_str, current_hour, current_bird_count)
+                    (date_str, current_hour, current_total_count)
                 )
                 save_image = True
-                print(f"[{date_str} {current_hour}:00] 新增紀錄: {current_bird_count} 隻")
+                print(f"[{date_str} {current_hour}:00] 新增紀錄: {current_total_count} 隻")
 
             else:
                 # 4. 情況 B: 該小時已有紀錄 -> 檢查是否打破紀錄
                 existing_max = row[0]
-                if current_bird_count > existing_max:
+                if current_total_count > existing_max:
                     cursor.execute(
                         'UPDATE hourly_max SET max_count = ? WHERE date = ? AND hour = ?', 
-                        (current_bird_count, date_str, current_hour)
+                        (current_total_count, date_str, current_hour)
                     )
                     save_image = True
-                    print(f"[{date_str} {current_hour}:00] 更新最大值: {existing_max} -> {current_bird_count} 隻")
+                    print(f"[{date_str} {current_hour}:00] 更新最大值: {existing_max} -> {current_total_count} 隻")
             
             conn.commit()
             
@@ -606,85 +534,7 @@ def video_feed(camera_id):
         
     return Response(generate_frames(camera_id),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/api/detection_image/<camera_id>')
-def detection_image(camera_id):
-    """
-    API: 返回指定攝影機最新的YOLO識別結果（靜態圖像）
-    例如: /api/detection_image/cam1
-    """
-    if camera_id not in streams:
-        return jsonify({"error": "Camera not found"}), 404
-    
-    detection_frame = streams[camera_id].get_detection_frame()
-    
-    if detection_frame is None:
-        # 如果還沒有識別結果，返回空圖像
-        return jsonify({"error": "No detection result yet"}), 204
-    
-    # 編碼為JPEG
-    ret, buffer = cv2.imencode('.jpg', detection_frame)
-    if ret:
-        return Response(buffer.tobytes(), mimetype='image/jpeg')
-    else:
-        return jsonify({"error": "Failed to encode image"}), 500
-    
-@app.route('/api/detection_info/<camera_id>')
-def detection_info(camera_id):
-    """
-    API: 返回指定攝影機最新的識別信息（JSON）
-    """
-    if camera_id not in streams:
-        return jsonify({"error": "Camera not found"}), 404
-    
-    stream = streams[camera_id]
-    detection_frame = stream.get_detection_frame()
-    
-    if detection_frame is None:
-        return jsonify({
-            "camera": camera_id,
-            "has_result": False,
-            "last_detection": None
-        })
-    
-    return jsonify({
-        "camera": camera_id,
-        "has_result": True,
-        "last_detection": datetime.fromtimestamp(stream.last_detection_time).isoformat(),
-        "next_detection_in": max(0, stream.detection_interval - (time.time() - stream.last_detection_time))
-    })
-
-@app.route('/api/manual_detect/<camera_id>', methods=['POST'])
-def manual_detect(camera_id):
-    """
-    API: 手動觸發指定攝影機的 YOLO 識別
-    立即執行識別，不受60秒間隔限制
-    """
-    if camera_id not in streams:
-        return jsonify({"error": "Camera not found"}), 404
-    
-    stream = streams[camera_id]
-    detection_frame, bird_count = stream.manual_detect()
-    
-    if detection_frame is None:
-        return jsonify({"error": bird_count}), 500
-    
-    # 編碼識別結果圖像
-    ret, buffer = cv2.imencode('.jpg', detection_frame)
-    if not ret:
-        return jsonify({"error": "Failed to encode image"}), 500
-    
-    # 返回 base64 編碼的圖像
-    img_base64 = base64.b64encode(buffer).decode("utf-8")
-    
-    return jsonify({
-        "status": "success",
-        "camera": camera_id,
-        "bird_count": bird_count,
-        "image": img_base64,
-        "timestamp": datetime.now().isoformat()
-    })
-    
+  
 @app.route('/api/get_zoom', methods=['GET'])
 def get_zoom():
     # 設定攝影機 URL (讀取狀態需使用 query=position)
