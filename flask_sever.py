@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, jsonify, send_from_directory, Response
+from flask import Flask, request, render_template, jsonify, send_from_directory, Response, send_file
 import os
 from ultralytics import YOLO, RTDETR
 import cv2
@@ -15,6 +15,7 @@ import sqlite3
 from datetime import datetime
 import threading
 from collections import deque
+import csv
 
 DB_NAME = 'cctv.db'
 
@@ -63,6 +64,14 @@ def to_mp4(input_path, output_path=None):
 
 generate_frames_model_light = RTDETR("/home/neat/Ron_train/comparison/gradcam/MANUAL_SAVE_sec_01752.pt")
 generate_frames_model_night = RTDETR("pt/rtdetr_night.pt")
+
+db_lock = threading.Lock() 
+csv_lock = threading.Lock()
+current_stat = {
+    'hour': datetime.now().strftime("%Y-%m-%d %H:00"),
+    'max_total': 0,
+    'counts': {0: 0, 1: 0, 2: 0, 3: 0}
+}
 
 def get_current_model():
     """在夜間使用夜間模型，白天使用標準模型。"""
@@ -151,6 +160,8 @@ class CameraStream:
 
                     # 更新統計與 FPS
                     update_hourly_max(total_count, detect_frame)
+                    update_csv_hourly(total_count, counts)
+
                     current_time = time.time()
                     fps = 1 / (current_time - prev_frame_time) if current_time > prev_frame_time else 0
                     fps_list.append(fps)
@@ -250,49 +261,83 @@ def update_hourly_max(current_total_count, frame):
     current_hour = now.hour             # 格式: 14 (代表下午兩點)
     filename = f"bird_{date_str}_{current_hour}.jpg"
 
-    try:
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            
-            # 2. 查詢該小時目前的紀錄
-            cursor.execute(
-                'SELECT max_count FROM hourly_max WHERE date = ? AND hour = ?', 
-                (date_str, current_hour)
-            )
-            row = cursor.fetchone()
-
-            save_image = False # 標記是否需要存照片
-            
-            if row is None:
-                # 3. 情況 A: 該小時還沒有任何紀錄 -> 直接新增
+    with db_lock: 
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                cursor = conn.cursor()
+                
+                # 2. 查詢該小時目前的紀錄
                 cursor.execute(
-                    'INSERT INTO hourly_max (date, hour, max_count) VALUES (?, ?, ?)', 
-                    (date_str, current_hour, current_total_count)
+                    'SELECT max_count FROM hourly_max WHERE date = ? AND hour = ?', 
+                    (date_str, current_hour)
                 )
-                save_image = True
-                print(f"[{date_str} {current_hour}:00] 新增紀錄: {current_total_count} 隻")
+                row = cursor.fetchone()
 
-            else:
-                # 4. 情況 B: 該小時已有紀錄 -> 檢查是否打破紀錄
-                existing_max = row[0]
-                if current_total_count > existing_max:
+                save_image = False # 標記是否需要存照片
+                
+                if row is None:
+                    # 3. 情況 A: 該小時還沒有任何紀錄 -> 直接新增
                     cursor.execute(
-                        'UPDATE hourly_max SET max_count = ? WHERE date = ? AND hour = ?', 
-                        (current_total_count, date_str, current_hour)
+                        'INSERT INTO hourly_max (date, hour, max_count) VALUES (?, ?, ?)', 
+                        (date_str, current_hour, current_total_count)
                     )
                     save_image = True
-                    print(f"[{date_str} {current_hour}:00] 更新最大值: {existing_max} -> {current_total_count} 隻")
+                    print(f"[{date_str} {current_hour}:00] 新增紀錄: {current_total_count} 隻")
+
+                else:
+                    # 4. 情況 B: 該小時已有紀錄 -> 檢查是否打破紀錄
+                    existing_max = row[0]
+                    if current_total_count > existing_max:
+                        cursor.execute(
+                            'UPDATE hourly_max SET max_count = ? WHERE date = ? AND hour = ?', 
+                            (current_total_count, date_str, current_hour)
+                        )
+                        save_image = True
+                        print(f"[{date_str} {current_hour}:00] 更新最大值: {existing_max} -> {current_total_count} 隻")
+                
+                conn.commit()
+                
+                # 如果有更新紀錄，就直接把照片存到硬碟 (覆蓋舊的)
+                if save_image and frame is not None:
+                    image_path = os.path.join(IMAGE_FOLDER, filename)
+                    cv2.imwrite(image_path, frame)
+                    print(f"已更新最大值照片: {filename}")
+                
+        except Exception as e:
+            print(f"資料庫更新失敗: {e}")
+
+def update_csv_hourly(total_count, counts_dict):
+    global current_stat
+    now = datetime.now()
+    hour_str = now.strftime("%Y-%m-%d %H:00")
+    
+    with csv_lock:
+        # 檢查是否跨小時了
+        if hour_str != current_stat['hour']:
+            # 1. 跨小時了，先把「上一個小時」的結算結果存進 CSV
+            save_to_csv(current_stat['hour'], current_stat['max_total'], current_stat['counts'])
             
-            conn.commit()
-            
-            # 如果有更新紀錄，就直接把照片存到硬碟 (覆蓋舊的)
-            if save_image and frame is not None:
-                image_path = os.path.join(IMAGE_FOLDER, filename)
-                cv2.imwrite(image_path, frame)
-                print(f"已更新最大值照片: {filename}")
-            
-    except Exception as e:
-        print(f"資料庫更新失敗: {e}")
+            # 2. 重置統計資料為新的一小時
+            current_stat['hour'] = hour_str
+            current_stat['max_total'] = 0
+            current_stat['counts'] = {0: 0, 1: 0, 2: 0, 3: 0}
+
+        # 只要目前畫面的數量更多，就覆蓋暫存紀錄 (不論是哪台 cam)
+        if total_count > current_stat['max_total']:
+            current_stat['max_total'] = total_count
+            current_stat['counts'] = counts_dict
+
+def save_to_csv(time_label, total, counts):
+    file_path = 'cctv_database.csv'
+    header = ['Time', 'Total', 'Anatidae', 'Ardea_cinerea', 'Turtle', 'Nycticorax']
+    file_exists = os.path.isfile(file_path)
+    
+    with open(file_path, mode='a', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(header)
+        writer.writerow([time_label, total, counts[0], counts[1], counts[2], counts[3]])
+    print(f"[CSV] 已結算並存檔: {time_label} - Max: {total}")
 
 app = Flask(__name__)
 
@@ -709,3 +754,19 @@ def get_daily_stats():
     except Exception as e:
         print(f"API Error: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/download_csv')
+def download_csv():
+    file_path = 'cctv_database.csv'
+    
+    if os.path.exists(file_path):
+        # as_attachment=True 會強制瀏覽器下載而不是直接打開
+        # download_name 可以自訂使用者下載後看到的名字
+        return send_file(
+            file_path,
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=f"Biological statistics.csv"
+        )
+    else:
+        return "檔案還沒生成，請稍候再試", 404
