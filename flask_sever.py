@@ -16,6 +16,8 @@ from datetime import datetime
 import threading
 from collections import deque
 import csv
+from torchvision.ops import nms
+from collections import deque
 
 DB_NAME = 'cctv.db'
 
@@ -63,7 +65,7 @@ def to_mp4(input_path, output_path=None):
     return output_path
 
 generate_frames_model_light = RTDETR("/home/neat/Ron_train/comparison/gradcam/MANUAL_SAVE_sec_01752.pt")
-generate_frames_model_night = RTDETR("pt/rtdetr_night.pt")
+generate_frames_model_night = RTDETR("pt/night_best.pt")
 
 db_lock = threading.Lock() 
 csv_lock = threading.Lock()
@@ -73,13 +75,49 @@ current_stat = {
     'counts': {0: 0, 1: 0, 2: 0, 3: 0}
 }
 
+# 簡單的燈光狀態快取 (每60秒更新一次)
+light_cache = {'state': False, 'last_update': 0}
+
 def get_current_model():
-    """在夜間使用夜間模型，白天使用標準模型。"""
-    hour = datetime.now().hour
-    # 20:00~05:59 走夜間模型
-    if hour >= 20 or hour < 6:
-        return generate_frames_model_night
-    return generate_frames_model_light
+    """根據燈光狀態選擇模型：燈亮=夜間模型，燈暗=白天模型"""
+    global light_cache
+    current_time = time.time()
+    
+    # 如果超過60秒沒更新，就重新檢查燈光狀態
+    if current_time - light_cache['last_update'] > 60:
+        # 檢查燈光狀態
+        url = 'https://221.120.74.49:9663/axis-cgi/lightcontrol.cgi'
+        payload = {
+            "apiVersion": "1.4",
+            "context": "state_check",
+            "method": "getLightInformation"
+        }
+        
+        try:
+            response = requests.post(
+                url,
+                json=payload,
+                auth=HTTPBasicAuth("root", "pass"),
+                verify=False,
+                timeout=3
+            )
+            
+            res_data = response.json()
+            is_light_on = res_data.get('data', {}).get('items', [{}])[0].get('lightState', False)
+            light_cache['state'] = is_light_on
+            light_cache['last_update'] = current_time
+            #print(f"[Model] 燈光狀態更新: {'夜間模式' if is_light_on else '白天模式'}")
+            
+        except Exception as e:
+            print(f"[Model] 燈光狀態檢查失敗: {e}")
+            # 失敗時使用預設值 (白天模式)
+            pass
+    
+    # 根據燈光狀態選擇模型
+    if light_cache['state']:
+        return generate_frames_model_night  # 燈亮 = 夜間
+    else:
+        return generate_frames_model_light  # 燈暗 = 白天
 
 class CameraStream:
     def __init__(self, rtsp_url, camera_name):
@@ -93,6 +131,7 @@ class CameraStream:
         self.last_dataset_save_time = time.time()  # 上次保存的時間
         self.dataset_save_interval = 1440  # 每1440秒保存一次（每小時3張）
         self.dataset_folder = "dataset"  # 資料集主文件夾
+        self.total_count_history = deque(maxlen=90)
         
         # 啟動背景執行緒
         self.thread = threading.Thread(target=self.update, args=())
@@ -138,7 +177,12 @@ class CameraStream:
                     }
 
                     if results and results[0].boxes:
-                        for box in results[0].boxes:
+                        # --- 核心手動 NMS 邏輯 (僅加這幾行) ---
+                        # 取得所有框的索引，iou_threshold 可依需求調整 (0.3~0.5)
+                        keep_idx = nms(results[0].boxes.xyxy, results[0].boxes.conf, iou_threshold=0.3)
+                        filtered_boxes = [results[0].boxes[i] for i in keep_idx]
+
+                        for box in filtered_boxes:
                             total_count += 1
                             x1, y1, x2, y2 = map(int, box.xyxy[0])
                             conf, cls = float(box.conf[0]), int(box.cls[0])
@@ -159,8 +203,16 @@ class CameraStream:
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
                     # 更新統計與 FPS
-                    update_hourly_max(total_count, detect_frame)
-                    update_csv_hourly(total_count, counts)
+                    self.total_count_history.append(total_count)
+                    if len(self.total_count_history) == self.total_count_history.maxlen:
+                        occurrence_count = list(self.total_count_history).count(total_count)
+                        stability_rate = occurrence_count / len(self.total_count_history)
+
+                        if stability_rate >= 0.8:
+                            update_hourly_max(total_count, detect_frame)
+                            update_csv_hourly(total_count, counts)
+                        else:
+                            pass
 
                     current_time = time.time()
                     fps = 1 / (current_time - prev_frame_time) if current_time > prev_frame_time else 0
