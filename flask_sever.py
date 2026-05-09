@@ -70,12 +70,13 @@ generate_frames_model_night = RTDETR("pt/night_best.pt")
 db_lock = threading.Lock() 
 csv_lock = threading.Lock()
 current_stat = {
-    'hour': datetime.now().strftime("%Y-%m-%d %H:00"),
+    'hour': datetime.now().strftime("%Y-%m-%d %H:00:00"),
     'max_total': 0,
-    'counts': {0: 0, 1: 0, 2: 0, 3: 0}
+    'counts': {0: 0, 1: 0, 2: 0, 3: 0},
+    'weather': None
 }
 
-# 簡單的燈光狀態快取 (每60秒更新一次)
+# 簡單的燈光狀態快取 (每120秒更新一次)
 light_cache = {'state': False, 'last_update': 0}
 
 def get_current_model():
@@ -83,8 +84,8 @@ def get_current_model():
     global light_cache
     current_time = time.time()
     
-    # 如果超過60秒沒更新，就重新檢查燈光狀態
-    if current_time - light_cache['last_update'] > 60:
+    # 如果超過120秒沒更新，就重新檢查燈光狀態
+    if current_time - light_cache['last_update'] > 120:
         # 檢查燈光狀態
         url = 'https://221.120.74.49:9663/axis-cgi/lightcontrol.cgi'
         payload = {
@@ -131,7 +132,7 @@ class CameraStream:
         self.last_dataset_save_time = time.time()  # 上次保存的時間
         self.dataset_save_interval = 1440  # 每1440秒保存一次（每小時3張）
         self.dataset_folder = "dataset"  # 資料集主文件夾
-        self.total_count_history = deque(maxlen=90)
+        self.total_count_history = deque(maxlen=60)
         
         # 啟動背景執行緒
         self.thread = threading.Thread(target=self.update, args=())
@@ -358,38 +359,92 @@ def update_hourly_max(current_total_count, frame):
         except Exception as e:
             print(f"資料庫更新失敗: {e}")
 
+def get_selected_weather(api_key, lat, lon):
+    url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}&units=metric&lang=en" 
+    try:
+        response = requests.get(url, timeout=3)
+        if response.status_code == 200:
+            data = response.json()
+            
+            # 計算露點 (簡易公式)
+            temp = data['main']['temp']
+            rh = data['main']['humidity']
+            dew_point = round(temp - ((100 - rh) / 5), 2)
+
+            return {
+                "Description": data["weather"][0]["description"],
+                "Temperature (°C)": temp,
+                "Dew Point (°C)": dew_point,
+                "Humidity (%)": rh,
+                "Wind Speed (m/s)": data['wind']['speed'],
+                "Wind Direction (°)": data['wind'].get('deg'),
+                "Cloud Coverage (%)": data['clouds']['all'],
+                "Rainfall Last 1h (mm)": data.get('rain', {}).get('1h', 0),
+                "Sunrise": datetime.fromtimestamp(data['sys']['sunrise']).strftime('%H:%M'),
+                "Sunset": datetime.fromtimestamp(data['sys']['sunset']).strftime('%H:%M')
+            }
+    except:
+        pass
+    return None
+
 def update_csv_hourly(total_count, counts_dict):
     global current_stat
     now = datetime.now()
-    hour_str = now.strftime("%Y-%m-%d %H:00")
+    hour_str = now.strftime("%Y-%m-%d %H:00:00")
     
     with csv_lock:
         # 檢查是否跨小時了
         if hour_str != current_stat['hour']:
             # 1. 跨小時了，先把「上一個小時」的結算結果存進 CSV
-            save_to_csv(current_stat['hour'], current_stat['max_total'], current_stat['counts'])
+            save_to_csv(current_stat['hour'], current_stat['max_total'], current_stat['counts'], current_stat['weather'])
             
             # 2. 重置統計資料為新的一小時
             current_stat['hour'] = hour_str
             current_stat['max_total'] = 0
             current_stat['counts'] = {0: 0, 1: 0, 2: 0, 3: 0}
+            current_stat['weather'] = None
 
         # 只要目前畫面的數量更多，就覆蓋暫存紀錄 (不論是哪台 cam)
         if total_count > current_stat['max_total']:
             current_stat['max_total'] = total_count
             current_stat['counts'] = counts_dict
 
-def save_to_csv(time_label, total, counts):
+            new_weather = get_selected_weather("1d46c4fb8e128a85994b12b757b998f6", 23.050288847837354, 120.14645308748925) 
+            if new_weather:
+                current_stat['weather'] = new_weather
+                
+def save_to_csv(time_label, total, counts, weather):
     file_path = 'cctv_database.csv'
-    header = ['Time', 'Total', 'Anatidae', 'Ardea_cinerea', 'Turtle', 'Nycticorax']
+    header = ['Time', 'Total', 'Anatidae', 'Ardea_cinerea', 'Turtle', 'Nycticorax', 
+              'Description', 'Temperature (°C)', 'Dew Point (°C)', 'Humidity (%)', 
+              'Wind Speed (m/s)', 'Wind Direction (°)', 'Cloud Coverage (%)', 'Rainfall Last 1h (mm)', 'Sunrise', 'Sunset']
+    
     file_exists = os.path.isfile(file_path)
     
+    if weather is None:
+        weather = {
+            "Description": None,
+            "Temperature (°C)": None,
+            "Dew Point (°C)": None,
+            "Humidity (%)": None,
+            "Wind Speed (m/s)": None,
+            "Wind Direction (°)": None,
+            "Cloud Coverage (%)": None,
+            "Rainfall Last 1h (mm)": None,
+            "Sunrise": None,
+            "Sunset": None
+        }
+
     with open(file_path, mode='a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         if not file_exists:
             writer.writerow(header)
-        writer.writerow([time_label, total, counts[0], counts[1], counts[2], counts[3]])
-    print(f"[CSV] 已結算並存檔: {time_label} - Max: {total}")
+        writer.writerow([time_label, total, counts[0], counts[1], counts[2], counts[3],
+                         weather["Description"], weather["Temperature (°C)"], weather["Dew Point (°C)"],
+                            weather["Humidity (%)"], weather["Wind Speed (m/s)"], weather["Wind Direction (°)"],
+                            weather["Cloud Coverage (%)"], weather["Rainfall Last 1h (mm)"], weather["Sunrise"], weather["Sunset"]])
+    
+    print(f"[CSV] 結算成功: {time_label} (Max:{total} 當時天氣:{weather['Description']})")
 
 app = Flask(__name__)
 
