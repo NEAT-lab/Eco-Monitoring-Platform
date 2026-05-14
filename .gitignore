@@ -16,3 +16,4 @@ Ron/
 runs/
 test_model/
 *.csv
+audio_detect/

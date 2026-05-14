@@ -132,8 +132,9 @@ class CameraStream:
         self.last_dataset_save_time = time.time()  # 上次保存的時間
         self.dataset_save_interval = 1440  # 每1440秒保存一次（每小時3張）
         self.dataset_folder = "dataset"  # 資料集主文件夾
-        self.total_count_history = deque(maxlen=60)
-        
+        self.total_count_history = deque(maxlen=90)
+        self.hour_str = datetime.now().strftime("%Y-%m-%d %H:00:00") # 當前小時的標籤
+
         # 啟動背景執行緒
         self.thread = threading.Thread(target=self.update, args=())
         self.thread.daemon = True 
@@ -209,9 +210,11 @@ class CameraStream:
                         occurrence_count = list(self.total_count_history).count(total_count)
                         stability_rate = occurrence_count / len(self.total_count_history)
 
-                        if stability_rate >= 0.8:
+                        if stability_rate >= 0.8 or self.hour_str != datetime.now().strftime("%Y-%m-%d %H:00:00"):
                             update_hourly_max(total_count, detect_frame)
                             update_csv_hourly(total_count, counts)
+                            if self.hour_str != datetime.now().strftime("%Y-%m-%d %H:00:00"):
+                                self.hour_str = datetime.now().strftime("%Y-%m-%d %H:00:00")
                         else:
                             pass
 
@@ -361,30 +364,38 @@ def update_hourly_max(current_total_count, frame):
 
 def get_selected_weather(api_key, lat, lon):
     url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}&units=metric&lang=en" 
-    try:
-        response = requests.get(url, timeout=3)
-        if response.status_code == 200:
-            data = response.json()
-            
-            # 計算露點 (簡易公式)
-            temp = data['main']['temp']
-            rh = data['main']['humidity']
-            dew_point = round(temp - ((100 - rh) / 5), 2)
+    
+    for i in range(3):  # 最多重試3次
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                
+                # 計算露點 (簡易公式)
+                temp = data['main']['temp']
+                rh = data['main']['humidity']
+                dew_point = round(temp - ((100 - rh) / 5), 2)
 
-            return {
-                "Description": data["weather"][0]["description"],
-                "Temperature (°C)": temp,
-                "Dew Point (°C)": dew_point,
-                "Humidity (%)": rh,
-                "Wind Speed (m/s)": data['wind']['speed'],
-                "Wind Direction (°)": data['wind'].get('deg'),
-                "Cloud Coverage (%)": data['clouds']['all'],
-                "Rainfall Last 1h (mm)": data.get('rain', {}).get('1h', 0),
-                "Sunrise": datetime.fromtimestamp(data['sys']['sunrise']).strftime('%H:%M'),
-                "Sunset": datetime.fromtimestamp(data['sys']['sunset']).strftime('%H:%M')
-            }
-    except:
-        pass
+                return {
+                    "Description": data["weather"][0]["description"],
+                    "Temperature (°C)": temp,
+                    "Dew Point (°C)": dew_point,
+                    "Humidity (%)": rh,
+                    "Wind Speed (m/s)": data['wind']['speed'],
+                    "Wind Direction (°)": data['wind'].get('deg'),
+                    "Cloud Coverage (%)": data['clouds']['all'],
+                    "Rainfall Last 1h (mm)": data.get('rain', {}).get('1h', 0),
+                    "Sunrise": datetime.fromtimestamp(data['sys']['sunrise']).strftime('%H:%M'),
+                    "Sunset": datetime.fromtimestamp(data['sys']['sunset']).strftime('%H:%M')
+                }
+            else:
+                print(f"天氣 API 請求失敗 (狀態碼: {response.status_code})，重試中... ({i+1}/3)")
+        except:
+            pass
+
+        if i < 2:
+            time.sleep(2)
+
     return None
 
 def update_csv_hourly(total_count, counts_dict):
@@ -423,16 +434,16 @@ def save_to_csv(time_label, total, counts, weather):
     
     if weather is None:
         weather = {
-            "Description": None,
-            "Temperature (°C)": None,
-            "Dew Point (°C)": None,
-            "Humidity (%)": None,
-            "Wind Speed (m/s)": None,
-            "Wind Direction (°)": None,
-            "Cloud Coverage (%)": None,
-            "Rainfall Last 1h (mm)": None,
-            "Sunrise": None,
-            "Sunset": None
+            "Description": "",
+            "Temperature (°C)": "",
+            "Dew Point (°C)": "",
+            "Humidity (%)": "",
+            "Wind Speed (m/s)": "",
+            "Wind Direction (°)": "",
+            "Cloud Coverage (%)": "",
+            "Rainfall Last 1h (mm)": "",
+            "Sunrise": "",
+            "Sunset": ""
         }
 
     with open(file_path, mode='a', newline='', encoding='utf-8') as f:
