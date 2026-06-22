@@ -8,6 +8,7 @@ import base64
 import subprocess
 from common_parameters import latest_data
 import time
+import random
 from requests.auth import HTTPDigestAuth, HTTPBasicAuth
 import requests
 import urllib3
@@ -18,6 +19,14 @@ from collections import deque
 import csv
 from torchvision.ops import nms
 from collections import deque
+import io
+import librosa
+import librosa.display
+import matplotlib
+matplotlib.use('Agg')  # 必備：防止伺服器端嘗試開啟 GUI 視窗
+import matplotlib.pyplot as plt
+import tensorflow as tf
+import gc
 
 DB_NAME = 'cctv.db'
 
@@ -64,7 +73,7 @@ def to_mp4(input_path, output_path=None):
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return output_path
 
-generate_frames_model_light = RTDETR("/home/neat/Ron_train/comparison/gradcam/MANUAL_SAVE_sec_01752.pt")
+generate_frames_model_light = RTDETR("/home/neat/Ron_train/a_light_train/RT_DETR_l_space/runs/RTDETR_L_Test_Space4/weights/MANUAL_SAVE_sec_01752.pt")
 generate_frames_model_night = RTDETR("pt/night_best.pt")
 
 db_lock = threading.Lock() 
@@ -76,16 +85,31 @@ current_stat = {
     'weather': None
 }
 
-# 簡單的燈光狀態快取 (每120秒更新一次)
-light_cache = {'state': False, 'last_update': 0}
+# 簡單的燈光狀態快取 (隨機間隔更新)
+light_cache = {'state': False, 'last_update': 0, 'interval': random.randint(180, 360), 'checking': True, 'last_active_period': None}
 
 def get_current_model():
     """根據燈光狀態選擇模型：燈亮=夜間模型，燈暗=白天模型"""
     global light_cache
     current_time = time.time()
-    
-    # 如果超過120秒沒更新，就重新檢查燈光狀態
-    if current_time - light_cache['last_update'] > 120:
+    current_hour = datetime.now().hour
+
+    current_period = None
+    expected_state = None
+
+    if 5 <= current_hour < 7:
+        current_period = "morning"
+        expected_state = False  
+    elif 17 <= current_hour < 20:
+        current_period = "evening"
+        expected_state = True
+
+    if current_period != light_cache['last_active_period']:
+        light_cache['checking'] = True
+        light_cache['last_active_period'] = current_period
+        print(f"[Model] 時段變更，重置檢查狀態。當前時段: {current_period}") 
+
+    if current_time - light_cache['last_update'] > light_cache['interval'] and (5 <= current_hour < 7 or 17 <= current_hour < 20) and current_period and light_cache['checking']:
         # 檢查燈光狀態
         url = 'https://221.120.74.49:9663/axis-cgi/lightcontrol.cgi'
         payload = {
@@ -107,8 +131,13 @@ def get_current_model():
             is_light_on = res_data.get('data', {}).get('items', [{}])[0].get('lightState', False)
             light_cache['state'] = is_light_on
             light_cache['last_update'] = current_time
-            #print(f"[Model] 燈光狀態更新: {'夜間模式' if is_light_on else '白天模式'}")
+            light_cache['interval'] = random.randint(180, 360)
+            print(f"[Model] 燈光狀態更新: {'夜間模式' if is_light_on else '白天模式'}")
             
+            if is_light_on == expected_state:
+                light_cache['checking'] = False
+                print(f"🎉 [Model] 燈光已達到預期狀態 ({'亮' if expected_state else '暗'})，鎖定 {current_period} 時段，停止後續 API 請求。")
+       
         except Exception as e:
             print(f"[Model] 燈光狀態檢查失敗: {e}")
             # 失敗時使用預設值 (白天模式)
@@ -134,6 +163,7 @@ class CameraStream:
         self.dataset_folder = "dataset"  # 資料集主文件夾
         self.total_count_history = deque(maxlen=90)
         self.hour_str = datetime.now().strftime("%Y-%m-%d %H:00:00") # 當前小時的標籤
+        self.interval = random.randint(300, 600)
 
         # 啟動背景執行緒
         self.thread = threading.Thread(target=self.update, args=())
@@ -156,7 +186,8 @@ class CameraStream:
             print(f" [Stream-{self.camera_name}] Connected.")
             prev_frame_time = time.time()
             fps_list = deque(maxlen=240)
-            
+            last_call_weather_time = time.time()
+
             while not self.stopped:
                 success, frame = cap.read()
                 if not success:
@@ -215,10 +246,16 @@ class CameraStream:
                             update_csv_hourly(total_count, counts)
                             if self.hour_str != datetime.now().strftime("%Y-%m-%d %H:00:00"):
                                 self.hour_str = datetime.now().strftime("%Y-%m-%d %H:00:00")
+                                last_call_weather_time = time.time()
                         else:
                             pass
 
                     current_time = time.time()
+                    if(current_time - last_call_weather_time >= self.interval) and (current_stat["weather"] is None):
+                        current_stat["weather"] = get_selected_weather(23.050288847837354, 120.14645308748925)
+                        last_call_weather_time = current_time
+                        self.interval = random.randint(300, 600)
+
                     fps = 1 / (current_time - prev_frame_time) if current_time > prev_frame_time else 0
                     fps_list.append(fps)
                     smooth_fps = sum(fps_list) / len(fps_list)
@@ -362,36 +399,85 @@ def update_hourly_max(current_total_count, frame):
         except Exception as e:
             print(f"資料庫更新失敗: {e}")
 
-def get_selected_weather(api_key, lat, lon):
-    url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}&units=metric&lang=en" 
-    
+def get_selected_weather(lat, lon):
+    url = (
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,"
+        "wind_direction_10m,precipitation,cloud_cover,weathercode"
+        "&daily=sunrise,sunset"
+        "&timezone=auto"
+    )
+
+    weather_map = {
+        0: "clear",          # 晴
+        1: "mostly clear",   # 晴到多雲
+        2: "partly cloudy",  # 多雲
+        3: "overcast",       # 陰天
+        45: "fog",           # 霧
+        48: "fog",
+        
+        # 小雨系列（毛毛雨、連續小雨、短暫小陣雨）
+        51: "light rain", 53: "light rain", 55: "light rain",
+        61: "light rain", 80: "light rain",
+        
+        # 大雨系列（中雨、連續大雨、強烈陣雨）
+        63: "heavy rain", 65: "heavy rain",
+        81: "heavy rain", 82: "heavy rain",
+        
+        # 雷陣雨（通常伴隨大暴雨與雷聲）
+        95: "thunderstorm", 96: "thunderstorm", 97: "thunderstorm",
+        
+        # 降雪（台灣平地遇不到，防錯保留）
+        71: "snow", 73: "snow", 75: "snow", 77: "snow", 56: "snow", 57: "snow", 66: "snow", 67: "snow", 85: "snow", 86: "snow"
+    }
+
     for i in range(3):  # 最多重試3次
         try:
             response = requests.get(url, timeout=5)
             if response.status_code == 200:
                 data = response.json()
-                
-                # 計算露點 (簡易公式)
-                temp = data['main']['temp']
-                rh = data['main']['humidity']
+
+                current = data["current"]
+                daily = data["daily"]
+
+                print(f"successfully weather data: {data}")
+
+                # 基本欄位
+                temp = current["temperature_2m"]
+                rh = current["relative_humidity_2m"]
                 dew_point = round(temp - ((100 - rh) / 5), 2)
 
+                code = current.get("weathercode", -1)
+
+                try:
+                    sunrise_raw = daily["sunrise"][0]
+                    sunset_raw = daily["sunset"][0]
+                    sunrise_time = sunrise_raw.split('T')[1] if 'T' in sunrise_raw else sunrise_raw[11:16]
+                    sunset_time = sunset_raw.split('T')[1] if 'T' in sunset_raw else sunset_raw[11:16]
+                except Exception:
+                    sunrise_time = ""
+                    sunset_time = ""
+
                 return {
-                    "Description": data["weather"][0]["description"],
+                    "Description": weather_map.get(code, str(code)),
                     "Temperature (°C)": temp,
                     "Dew Point (°C)": dew_point,
                     "Humidity (%)": rh,
-                    "Wind Speed (m/s)": data['wind']['speed'],
-                    "Wind Direction (°)": data['wind'].get('deg'),
-                    "Cloud Coverage (%)": data['clouds']['all'],
-                    "Rainfall Last 1h (mm)": data.get('rain', {}).get('1h', 0),
-                    "Sunrise": datetime.fromtimestamp(data['sys']['sunrise']).strftime('%H:%M'),
-                    "Sunset": datetime.fromtimestamp(data['sys']['sunset']).strftime('%H:%M')
+                    # 修正：Open-Meteo 預設為 km/h，在此轉換為 m/s
+                    "Wind Speed (m/s)": round(current["wind_speed_10m"] / 3.6, 2),
+                    "Wind Direction (°)": current.get("wind_direction_10m"),
+                    "Cloud Coverage (%)": current.get("cloud_cover"),
+                    "Rainfall Last 1h (mm)": current.get("precipitation", 0),
+                    "Sunrise": sunrise_time,
+                    "Sunset": sunset_time
                 }
+
             else:
                 print(f"天氣 API 請求失敗 (狀態碼: {response.status_code})，重試中... ({i+1}/3)")
-        except:
-            pass
+
+        except Exception as e:
+            print(f"天氣 API 請求錯誤: {e}，重試中... ({i+1}/3)")
 
         if i < 2:
             time.sleep(2)
@@ -420,10 +506,6 @@ def update_csv_hourly(total_count, counts_dict):
             current_stat['max_total'] = total_count
             current_stat['counts'] = counts_dict
 
-            new_weather = get_selected_weather("1d46c4fb8e128a85994b12b757b998f6", 23.050288847837354, 120.14645308748925) 
-            if new_weather:
-                current_stat['weather'] = new_weather
-                
 def save_to_csv(time_label, total, counts, weather):
     file_path = 'cctv_database.csv'
     header = ['Time', 'Total', 'Anatidae', 'Ardea_cinerea', 'Turtle', 'Nycticorax', 
@@ -433,6 +515,7 @@ def save_to_csv(time_label, total, counts, weather):
     file_exists = os.path.isfile(file_path)
     
     if weather is None:
+        print("Weather data is None, using default values.")
         weather = {
             "Description": "",
             "Temperature (°C)": "",
@@ -460,7 +543,7 @@ def save_to_csv(time_label, total, counts, weather):
 app = Flask(__name__)
 
 UPLOAD_FOLDER = "uploads"
-RESULT_FOLDER = "results/runs"
+RESULT_FOLDER = "/home/neat/Ron/Eco-Monitoring-Platform/results/runs"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
 
@@ -468,6 +551,15 @@ MODEL_FOLDER = "pt"
 available_models = sorted([f for f in os.listdir(MODEL_FOLDER) if f.endswith(".pt")])
 models_list = [YOLO(os.path.join(MODEL_FOLDER, f)) for f in available_models]
 models = {os.path.join(MODEL_FOLDER, f): m for f, m in zip(available_models, models_list)}
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print("已開啟動態顯存分配")
+    except RuntimeError as e:
+        print(e)
+MODEL_AUDIO = tf.keras.models.load_model('/home/neat/Ron/Eco-Monitoring-Platform/audio_detect/model/best_bird_model.keras')
 
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 rtsp_url_1 = "rtsp://root:pass@221.120.74.49:9664/axis-media/media.amp"
@@ -502,6 +594,10 @@ def cctv():
 @app.route("/panorama")
 def panorama():
     return render_template("panorama.html")
+
+@app.route("/audio")
+def audio():
+    return render_template("audio.html")
 
 # API
 @app.route("/get_models")
@@ -681,7 +777,104 @@ def api_panorama():
         
     except Exception as e:
         return jsonify({"type": "error", "message": f"物件辨識失敗: {str(e)}"}), 500
+    
+@app.route('/api/audio', methods=['POST'])
+def api_audio():
+    if 'file' not in request.files:
+        return jsonify({"type": "error", "message": "未偵測到上傳檔案"}), 400
+    
+    file = request.files['file']
+    
+    # 設定參數
+    SR = 22050          
+    DURATION = 2.0      
+    TARGET_LEN = int(SR * DURATION) 
+    N_MELS = 224
+    
+    try:
+        # --- 檔案大小與長度初步檢查 ---
+        audio_data = file.read()
+        if len(audio_data) > 15 * 1024 * 1024: # 限制 15MB
+            return jsonify({"type": "error", "message": "檔案過大，請限制在 15MB 以內"}), 400
 
+        # 直接從記憶體讀取音訊
+        audio_stream = io.BytesIO(audio_data)
+        y, sr = librosa.load(audio_stream, sr=SR)
+        total_sec = librosa.get_duration(y=y, sr=sr)
+        
+        if total_sec > 60: # 限制 60 秒
+            return jsonify({"type": "error", "message": "音訊過長，請限制在 60 秒以內"}), 400
+
+        results_data = {"time": [], "p1": [], "p2": [], "p3": []}
+
+        # --- 核心分析迴圈 ---
+        for start_sample in range(0, len(y), TARGET_LEN):
+            y_chunk = y[start_sample : start_sample + TARGET_LEN]
+            if len(y_chunk) < TARGET_LEN:
+                y_chunk = np.pad(y_chunk, (0, TARGET_LEN - len(y_chunk)))
+            
+            # 生成頻譜數據
+            S = librosa.feature.melspectrogram(y=y_chunk, sr=sr, n_mels=N_MELS, hop_length=196)
+            S_dB = librosa.power_to_db(S, ref=np.max)
+            
+            # 繪製臨時頻譜圖 (存於記憶體)
+            img_buf = io.BytesIO()
+            fig_spec, ax_spec = plt.subplots(figsize=(2.24, 2.24), dpi=100)
+            ax_spec.axis('off')
+            librosa.display.specshow(S_dB, sr=sr, cmap='viridis', ax=ax_spec)
+            plt.savefig(img_buf, format='png', bbox_inches='tight', pad_inches=0)
+            
+            # 關鍵：立即關閉畫布釋放記憶體
+            plt.close(fig_spec)
+            fig_spec.clf()
+            
+            # AI 預測
+            img_buf.seek(0)
+            img = tf.keras.utils.load_img(img_buf, target_size=(224, 224))
+            img_array = np.expand_dims(tf.keras.utils.img_to_array(img), 0)
+            preds = MODEL_AUDIO.predict(img_array, verbose=0)[0]
+            
+            results_data["time"].append(round(start_sample / sr, 2))
+            results_data["p1"].append(float(preds[0] * 100))
+            results_data["p2"].append(float(preds[1] * 100))
+            results_data["p3"].append(float(preds[2] * 100))
+
+        # --- 生成最終統計圖表 ---
+        final_plot_buf = io.BytesIO()
+        plt.figure(figsize=(10, 5))
+        plt.plot(results_data["time"], results_data["p1"], label='Anatidae', color='#1f77b4', linewidth=2)
+        plt.plot(results_data["time"], results_data["p2"], label='Ardea cinerea', color='#d62728', linewidth=2)
+        plt.plot(results_data["time"], results_data["p3"], label='None (Background)', color='#7f7f7f', linestyle='--')
+        
+        plt.title(f"Bird Detection Report: {file.filename}")
+        plt.xlabel("Time (Seconds)")
+        plt.ylabel("Confidence (%)")
+        plt.ylim(-5, 105)
+        plt.legend(loc='upper right')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        plt.savefig(final_plot_buf, format='png')
+        plt.close('all') # 關閉所有剩餘畫布
+        
+        final_plot_buf.seek(0)
+        img_base64 = base64.b64encode(final_plot_buf.read()).decode("utf-8")
+
+        # --- 釋放資源 ---
+        gc.collect() 
+
+        return jsonify({
+            "type": "image",
+            "image": img_base64,
+            "filename": file.filename,
+            "analysis_data": results_data
+        })
+
+    except Exception as e:
+        plt.close('all')
+        print(f"❌ 錯誤: {e}")
+        return jsonify({"type": "error", "message": str(e)}), 500
+    
 @app.route("/api/data")
 def api_data():
     return jsonify(latest_data)
