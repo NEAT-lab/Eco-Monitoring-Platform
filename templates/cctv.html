@@ -1,16 +1,19 @@
 <!DOCTYPE html>
 <html lang="zh-tw">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NCKU NEAT LAB</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="../static/style.css">
 </head>
+
 <body>
     <header>
         <nav>
             <div class="logo">
-                <img src="../static/images/neat_logo.jpg" width="50" height="50">
+                <img src="../static/images/neat_logo.jpg" alt="NEAT LAB Logo">
                 <span>NEAT LAB</span>
             </div>
             <ul>
@@ -18,12 +21,72 @@
                 <li><a href="/detect">detect</a></li>
                 <li><a href="/cctv">cctv</a></li>
                 <li><a href="/panorama">panorama</a></li>
+                <li><a href="/audio">audio</a></li>
             </ul>
         </nav>
     </header>
-    <div style="display: flex; gap: 20px; align-items: flex-start;">
-        <main class="content">
-            <h2 id="raspberry">實驗室 neat 樹莓派溫溼度監測</h2>
+
+    <div id="main-container">
+        <div id="video-section">
+            <h2>即時環境監測</h2>
+            <div id="control_section">
+                <div id="control_section_left">
+                    <h3>Camera 1</h3>
+                    <div id="zoom_control">
+                        <label>Zoom: <span id="zoomDisplay">----</span></label>
+                        <input type="range" id="zoomSlider" min="1" max="9999" value="">
+                        <div id="zoomStatus">就緒</div>
+                    </div>
+                    <img id="rtsp_test" alt="RTSP Feed 1">
+                </div>
+                <div id="control_section_right">
+                    <h3>Camera 2</h3>
+                    <div id="camera2_controls">                        
+                        <div id="direction-control">
+                            <button id="upBtn">上</button>
+                            <button id="downBtn">下</button>
+                            <button id="leftBtn">左</button>
+                            <button id="rightBtn">右</button>
+                            <div id="directionStatus">就緒</div>
+                        </div>
+                        <div id="zoom_control_2">
+                            <label>Zoom: <span id="zoomDisplay_2">----</span></label>
+                            <input type="range" id="zoomSlider_2" min="1" max="9999" value="">
+                            <div id="zoomStatus_2">就緒</div>
+                        </div>                        
+                    </div>
+                    <img id="rtsp_test_2" alt="RTSP Feed 2">
+                </div>
+            </div>
+        </div>
+        
+        <h3>生物活動統計</h3>
+        <div id="chart-section">
+            <!-- 日期控制列 -->
+            <div id="chart-controls">
+                <button id="btnPrev">◀ 前一天</button>
+                <input type="date" id="datePicker">
+                <button id="btnNext">後一天 ▶</button>
+                <button id="btnToday" style="background-color: #28a745;">回到今天</button>
+            </div>
+            <div class="chart-box">
+                <canvas id="birdChart"></canvas>
+            </div>
+        </div>
+        <div class="image-section" style="margin-top: 30px; text-align: center;">
+            <p>點擊上方長條圖以查看該時段照片</p>
+            <h3 id="imageTitle"></h3>
+            <!-- 預設隱藏圖片，等有點擊或載入時才顯示 -->
+            <div id="imageContainer">
+                <img id="recordImage" src="" alt="尚無該時段照片"
+                    style="max-width: 100%; display: none; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
+                <p id="noImageText" style="color: #666;">(尚無照片)</p>
+            </div>
+        </div>
+        <a href="/api/download_csv" class="btn btn-primary">Biological statistics</a>
+
+        <main id="sensor-section">
+            <h3 id="raspberry">neat raspberry 溫溼度監測</h3>
 
             <div id="temperature" class="upload-box">溫度：<span id="temp">--</span> °C</div>
             <div id="humidity" class="upload-box">濕度：<span id="hum">--</span> %</div>
@@ -31,10 +94,7 @@
 
             <script src="../static/cctv.js"></script>
         </main>
-        <div>
-            <h2>rtsp 測試影像</h2>
-            <img id="rtsp_test" src="/video_feed" width="800">
-        </div>
     </div>
 </body>
+
 </html>

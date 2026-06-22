@@ -8,3 +8,12 @@ env/
 venv/
 .idea/
 .vscode/
+Ron/
+*.db
+*jpg
+*.jpeg
+*.out
+runs/
+test_model/
+*.csv
+audio_detect/
