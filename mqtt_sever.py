@@ -1,9 +1,7 @@
 import json
 import time
-import threading
-from flask import Flask, jsonify, render_template, send_file
 import paho.mqtt.client as mqtt
-from common_parameters import latest_data
+from sensor_data import latest_data
 
 # ---------- MQTT ----------
 MQTT_BROKER = "localhost"   # 或 EMQX IP

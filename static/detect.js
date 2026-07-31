@@ -15,11 +15,11 @@ window.onload = async function () {
     const select = document.getElementById("modelSelect");
     data.models.forEach(m => {
         const opt = document.createElement("option");
-        opt.value = `pt/${m}`;  // 完整路徑
+        opt.value = `weights/detection/${m}`;  // 完整路徑
         opt.innerText = m;
         select.appendChild(opt);
     });
-    modelPath = "pt/yolov8n.pt";  // 預設模型
+    modelPath = "weights/detection/yolov8n.pt";  // 預設模型
     select.value = modelPath;
 }
 

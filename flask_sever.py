@@ -7,26 +7,26 @@ from dotenv import load_dotenv
 from ultralytics import YOLO, RTDETR
 import cv2
 import numpy as np
-from torchvision.ops import nms  # 手動 NMS 去除重疊框
+from torchvision.ops import nms  
 
 # 攝影機/外部 API 通訊
 from requests.auth import HTTPDigestAuth, HTTPBasicAuth
 import requests
 import urllib3
-import subprocess  # 呼叫 ffmpeg 轉檔
+import subprocess  
 
 # 資料庫與檔案輸出
 import sqlite3
 import csv
 import base64
-from common_parameters import latest_data
+from sensor_data import latest_data
 
 # 音訊辨識
 import io
 import librosa
 import librosa.display
 import matplotlib
-matplotlib.use('Agg')  # 必備：防止伺服器端嘗試開啟 GUI 視窗
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import gc
@@ -54,13 +54,15 @@ CAMERA_PASS = os.getenv("CAMERA_PASS")
 CAMERA_HOST = os.getenv("CAMERA_HOST")
 
 UPLOAD_FOLDER = "uploads"
-RESULT_FOLDER = "/home/neat/Ron/Eco-Monitoring-Platform/results/runs"
-MODEL_FOLDER = "pt"
+RESULT_FOLDER = "results/runs"
+DETECTION_MODEL_FOLDER = "weights/detection"
+CCTV_MODEL_FOLDER = "weights/cctv"
 IMAGE_FOLDER = os.path.join("static", "captures")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
-os.makedirs(MODEL_FOLDER, exist_ok=True)
+os.makedirs(DETECTION_MODEL_FOLDER, exist_ok=True)
+os.makedirs(CCTV_MODEL_FOLDER, exist_ok=True)
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
 # ========== 共用狀態與鎖（cctv）==========
@@ -75,6 +77,27 @@ current_stat = {
 
 # 簡單的燈光狀態快取 (隨機間隔更新)
 light_cache = {'state': False, 'last_update': 0, 'interval': random.randint(180, 360), 'checking': True, 'last_active_period': None}
+
+# ========== 偵測模型載入（detect／panorama）==========
+available_models = sorted([f for f in os.listdir(DETECTION_MODEL_FOLDER) if f.endswith(".pt")])
+detection_model_objects = [YOLO(os.path.join(DETECTION_MODEL_FOLDER, f)) for f in available_models]
+detection_models = {os.path.join(DETECTION_MODEL_FOLDER, f): m for f, m in zip(available_models, detection_model_objects)}
+
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print("已開啟動態顯存分配")
+    except RuntimeError as e:
+        print(e)
+
+# ========== 音訊模型載入（audio）==========
+audio_model = tf.keras.models.load_model('audio_detect/model/best_bird_model.keras')
+
+# ========== CCTV 模型載入（cctv）==========
+cctv_model_day = RTDETR(os.path.join(CCTV_MODEL_FOLDER, "rtdetr_day.pt"))
+cctv_model_night = RTDETR(os.path.join(CCTV_MODEL_FOLDER, "rtdetr_night.pt"))
 
 # ========== 資料庫（cctv）==========
 def init_db():
@@ -312,27 +335,6 @@ def to_mp4(input_path, output_path=None):
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return output_path
 
-# ========== 偵測模型載入（detect／panorama）==========
-available_models = sorted([f for f in os.listdir(MODEL_FOLDER) if f.endswith(".pt")])
-detection_model_objects = [YOLO(os.path.join(MODEL_FOLDER, f)) for f in available_models]
-detection_models = {os.path.join(MODEL_FOLDER, f): m for f, m in zip(available_models, detection_model_objects)}
-
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-    try:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        print("已開啟動態顯存分配")
-    except RuntimeError as e:
-        print(e)
-
-# ========== 音訊模型載入（audio）==========
-audio_model = tf.keras.models.load_model('/home/neat/Ron/Eco-Monitoring-Platform/audio_detect/model/best_bird_model.keras')
-
-# ========== CCTV 模型載入（cctv）==========
-cctv_model_day = RTDETR("/home/neat/Ron_train/a_light_train/RT_DETR_l_space/runs/RTDETR_L_Test_Space4/weights/MANUAL_SAVE_sec_01752.pt")
-cctv_model_night = RTDETR("pt/night_best.pt")
-
 # ========== 攝影機串流核心（cctv）==========
 def get_current_model():
     """根據燈光狀態選擇模型：燈亮=夜間模型，燈暗=白天模型"""
@@ -410,6 +412,7 @@ class CameraStream:
         self.total_count_history = deque(maxlen=90)
         self.hour_str = datetime.now().strftime("%Y-%m-%d %H:00:00") # 當前小時的標籤
         self.interval = random.randint(300, 600)
+        self.frame_interval = 0.03  # video_feed 傳輸節流間隔，決定瀏覽器實際能收到新畫面的速度上限
 
         # 啟動背景執行緒
         self.thread = threading.Thread(target=self.update, args=())
@@ -510,12 +513,15 @@ class CameraStream:
                     smooth_fps = sum(fps_list) / len(fps_list)
                     prev_frame_time = current_time
 
+                    # 顯示用 fps：不能超過 video_feed 的傳輸節流上限，避免跟實際畫面流暢度脫節
+                    display_fps = min(smooth_fps, 1 / self.frame_interval)
+
                     # 畫面上方資訊顯示 (自動排列)
                     h, w = detect_frame.shape[:2]
                     f_scale, thick = w / 1400, max(1, int(w / 500))
                     info_data = [
                         (f"cam : {self.camera_name}", (0, 255, 255)),
-                        (f"fps : {smooth_fps:.1f}", (255, 0, 0)),
+                        (f"fps : {display_fps:.1f}", (255, 0, 0)),
                         (f"total : {total_count}", (0, 255, 0)),
                         (f"Anatidae : {counts[0]}", (255, 0, 0)),
                         (f"Ardea_cinerea : {counts[1]}", (231, 224, 87)),
@@ -586,7 +592,7 @@ def generate_frames(camera_id):
             time.sleep(0.1)
             continue
 
-        time.sleep(0.03) # 限制傳輸 FPS
+        time.sleep(active_stream.frame_interval) # 限制傳輸 FPS
 
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
