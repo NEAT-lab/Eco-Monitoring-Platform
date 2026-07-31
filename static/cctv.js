@@ -10,14 +10,14 @@ async function updateData() {
 document.getElementById("rtsp_test").src = "/video_feed/cam1?t=" + Date.now();
 document.getElementById("rtsp_test_2").src = "/video_feed/cam2?t=" + Date.now();
 
-fetch('/api/get_zoom')
+fetch('/api/get_zoom/cam1')
   .then(res => res.json())
   .then(data => {
       document.getElementById('zoomDisplay').innerText = data.zoom;
       document.getElementById('zoomSlider').value = data.zoom;
   });
 
-fetch('/api/get_zoom_2')
+fetch('/api/get_zoom/cam2')
   .then(res => res.json())
   .then(data => {
       document.getElementById('zoomDisplay_2').innerText = data.zoom;
@@ -45,7 +45,7 @@ async function sendZoomCommand(zoomValue) {
     try {
         zoomStatus.textContent = '發送中...';
 
-        const response = await fetch('/api/zoom', {
+        const response = await fetch('/api/zoom/cam1', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -83,7 +83,7 @@ const directionStatus = document.getElementById('directionStatus');
 //     try {
 //         directionStatus.textContent = '發送中...';
 
-//         const response = await fetch('/api/direction_2', {
+//         const response = await fetch('/api/direction/cam2', {
 //             method: 'POST',
 //             headers: {
 //                 'Content-Type': 'application/json'
@@ -122,7 +122,7 @@ async function sendZoomCommand_2(zoomValue) {
     try {
         zoomStatus_2.textContent = '發送中...';
 
-        const response = await fetch('/api/zoom_2', {
+        const response = await fetch('/api/zoom/cam2', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
