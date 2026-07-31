@@ -1,4 +1,5 @@
 *.pt
+.env
 uploads/
 results/
 __pycache__/
