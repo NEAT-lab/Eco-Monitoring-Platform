@@ -125,9 +125,7 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    # 執行 SQL 指令建立表格
     # IF NOT EXISTS: 避免重複建立報錯
-    # PRIMARY KEY (date, hour): 設定複合主鍵
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS hourly_max (
             date TEXT,
@@ -137,15 +135,14 @@ def init_db():
         )
     ''')
 
-    conn.commit() # 確認執行
-    conn.close()  # 關閉連線
+    conn.commit()
+    conn.close()
     print(f"成功建立資料庫: {DB_NAME}")
 
 def update_hourly_max(current_total_count, frame):
-    # 1. 取得當前時間資訊
     now = datetime.now()
-    date_str = now.strftime('%Y-%m-%d') # 格式: 2023-10-27
-    current_hour = now.hour             # 格式: 14 (代表下午兩點)
+    date_str = now.strftime('%Y-%m-%d')
+    current_hour = now.hour             # 24 小時制，例如 14 代表下午兩點
     filename = f"bird_{date_str}_{current_hour}.jpg"
 
     with db_lock:
@@ -153,17 +150,15 @@ def update_hourly_max(current_total_count, frame):
             with sqlite3.connect(DB_NAME) as conn:
                 cursor = conn.cursor()
 
-                # 2. 查詢該小時目前的紀錄
                 cursor.execute(
                     'SELECT max_count FROM hourly_max WHERE date = ? AND hour = ?',
                     (date_str, current_hour)
                 )
                 row = cursor.fetchone()
 
-                save_image = False # 標記是否需要存照片
+                save_image = False
 
                 if row is None:
-                    # 3. 情況 A: 該小時還沒有任何紀錄 -> 直接新增
                     cursor.execute(
                         'INSERT INTO hourly_max (date, hour, max_count) VALUES (?, ?, ?)',
                         (date_str, current_hour, current_total_count)
@@ -172,7 +167,6 @@ def update_hourly_max(current_total_count, frame):
                     print(f"[{date_str} {current_hour}:00] 新增紀錄: {current_total_count} 隻")
 
                 else:
-                    # 4. 情況 B: 該小時已有紀錄 -> 檢查是否打破紀錄
                     existing_max = row[0]
                     if current_total_count > existing_max:
                         cursor.execute(
@@ -238,7 +232,6 @@ def get_selected_weather(lat, lon):
 
                 print(f"successfully weather data: {data}")
 
-                # 基本欄位
                 temp = current["temperature_2m"]
                 rh = current["relative_humidity_2m"]
                 dew_point = round(temp - ((100 - rh) / 5), 2)
@@ -949,7 +942,7 @@ def api_panorama():
     except Exception as e:
         return jsonify({"type": "error", "message": f"全景拼接失敗: {str(e)}"}), 500
 
-    # ==================== 步驟2: 使用與 /predict 相同的辨識邏輯 ====================
+    # ==================== 步驟2: detect ====================
     try:
         results = model(img)[0]
 
