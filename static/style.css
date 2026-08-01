@@ -367,56 +367,6 @@ input[type="date"] {
     border-radius: 8px;
 }
 
-/* ===== 平板裝置（768px 以上） ===== */
-@media (min-width: 768px) {
-    nav {
-        justify-content: space-evenly;
-    }
-
-    nav ul {
-        gap: 24px;
-    }
-
-    #video-wrapper {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
-    #rtsp_test,
-    #rtsp_test_2 {
-        width: 100%;
-        height: auto;
-    }
-
-    #main-container {
-        padding: 0 40px;
-    }
-}
-
-/* ===== 桌機裝置（1024px 以上） ===== */
-@media (min-width: 1024px) {
-    nav {
-        justify-content: space-evenly;
-    }
-
-    #main-container {
-        padding: 0 60px;
-        margin: 0 auto;
-        max-width: 1200px;
-    }
-
-    #video-wrapper {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
-    #rtsp_test,
-    #rtsp_test_2 {
-        width: 100%;
-        height: auto;
-        max-height: 800px;
-        object-fit: contain;
-    }
-}
-
 /* ===== 小型手機（320px - 480px） ===== */
 @media (max-width: 480px) {
     nav {
@@ -574,5 +524,55 @@ input[type="date"] {
     #rtsp_test_2 {
         width: 100%;
         height: auto;
+    }
+}
+
+/* ===== 平板裝置（768px 以上） ===== */
+@media (min-width: 768px) {
+    nav {
+        justify-content: space-evenly;
+    }
+
+    nav ul {
+        gap: 24px;
+    }
+
+    #video-wrapper {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    #rtsp_test,
+    #rtsp_test_2 {
+        width: 100%;
+        height: auto;
+    }
+
+    #main-container {
+        padding: 0 40px;
+    }
+}
+
+/* ===== 桌機裝置（1024px 以上） ===== */
+@media (min-width: 1024px) {
+    nav {
+        justify-content: space-evenly;
+    }
+
+    #main-container {
+        padding: 0 60px;
+        margin: 0 auto;
+        max-width: 1200px;
+    }
+
+    #video-wrapper {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    #rtsp_test,
+    #rtsp_test_2 {
+        width: 100%;
+        height: auto;
+        max-height: 800px;
+        object-fit: contain;
     }
 }

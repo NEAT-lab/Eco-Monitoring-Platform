@@ -23,7 +23,7 @@ async function uploadAudio() {
     formData.append('file', file);
 
     // 更新 UI 狀態
-    waitDiv.innerHTML = `<p style="color: #007bff;">🔍 正在分析「${file.name}」...請稍候</p>`;
+    waitDiv.innerHTML = `<p style="color: #007bff;">正在分析「${file.name}」...請稍候</p>`;
     resultChart.style.display = 'none';
     resultChart.src = "";
 
@@ -43,14 +43,14 @@ async function uploadAudio() {
             // 成功：渲染 Base64 圖表
             resultChart.src = "data:image/png;base64," + data.image;
             resultChart.style.display = 'block';
-            waitDiv.innerHTML = `<p style="color: green;">✅ 分析完成！</p>`;
+            waitDiv.innerHTML = `<p style="color: green;">分析完成！</p>`;
         } else {
             // 錯誤
-            waitDiv.innerHTML = `<p style="color: red;">❌ 錯誤：${data.message}</p>`;
+            waitDiv.innerHTML = `<p style="color: red;">錯誤：${data.message}</p>`;
         }
 
     } catch (error) {
         console.error("Analysis failed:", error);
-        waitDiv.innerHTML = `<p style="color: red;">❌ 發生連線錯誤或系統異常</p>`;
+        waitDiv.innerHTML = `<p style="color: red;">發生連線錯誤或系統異常</p>`;
     }
 }

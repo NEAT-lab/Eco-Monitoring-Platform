@@ -53,8 +53,8 @@ CAMERA_USER = os.getenv("CAMERA_USER")
 CAMERA_PASS = os.getenv("CAMERA_PASS")
 CAMERA_HOST = os.getenv("CAMERA_HOST")
 
-UPLOAD_FOLDER = "uploads"
-RESULT_FOLDER = "results/runs"
+UPLOAD_FOLDER = "detection_io/uploads"
+RESULT_FOLDER = "detection_io/results"
 DETECTION_MODEL_FOLDER = "weights/detection"
 CCTV_MODEL_FOLDER = "weights/cctv"
 IMAGE_FOLDER = os.path.join("static", "captures")
@@ -83,6 +83,11 @@ available_models = sorted([f for f in os.listdir(DETECTION_MODEL_FOLDER) if f.en
 detection_model_objects = [YOLO(os.path.join(DETECTION_MODEL_FOLDER, f)) for f in available_models]
 detection_models = {os.path.join(DETECTION_MODEL_FOLDER, f): m for f, m in zip(available_models, detection_model_objects)}
 
+# ========== CCTV 模型載入（cctv）==========
+cctv_model_day = RTDETR(os.path.join(CCTV_MODEL_FOLDER, "rtdetr_day.pt"))
+cctv_model_night = RTDETR(os.path.join(CCTV_MODEL_FOLDER, "rtdetr_night.pt"))
+
+# ========== 音訊模型載入（audio）==========
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
     try:
@@ -92,12 +97,27 @@ if gpus:
     except RuntimeError as e:
         print(e)
 
-# ========== 音訊模型載入（audio）==========
 audio_model = tf.keras.models.load_model('audio_detect/model/best_bird_model.keras')
 
-# ========== CCTV 模型載入（cctv）==========
-cctv_model_day = RTDETR(os.path.join(CCTV_MODEL_FOLDER, "rtdetr_day.pt"))
-cctv_model_night = RTDETR(os.path.join(CCTV_MODEL_FOLDER, "rtdetr_night.pt"))
+# ========== 影片轉碼工具（detect）==========
+def to_mp4(input_path, output_path=None):
+    if output_path is None:
+        output_path = os.path.splitext(input_path)[0] + ".mp4"
+
+    cmd = [
+        "ffmpeg",
+        "-y",               # 覆蓋已存在檔案
+        "-i", input_path,   # 輸入影片
+        "-c:v", "libx264",  # 視訊編碼
+        "-preset", "fast",
+        "-pix_fmt", "yuv420p",  # Chrome 可播放
+        "-c:a", "aac",          # 音訊編碼
+        "-b:a", "128k",          # 音訊 bitrate
+        output_path
+    ]
+
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return output_path
 
 # ========== 資料庫（cctv）==========
 def init_db():
@@ -315,26 +335,6 @@ def save_to_csv(time_label, total, counts, weather):
 
     print(f"[CSV] 結算成功: {time_label} (Max:{total} 當時天氣:{weather['Description']})")
 
-# ========== 影片轉碼工具（detect）==========
-def to_mp4(input_path, output_path=None):
-    if output_path is None:
-        output_path = os.path.splitext(input_path)[0] + ".mp4"
-
-    cmd = [
-        "ffmpeg",
-        "-y",               # 覆蓋已存在檔案
-        "-i", input_path,   # 輸入影片
-        "-c:v", "libx264",  # 視訊編碼
-        "-preset", "fast",
-        "-pix_fmt", "yuv420p",  # Chrome 可播放
-        "-c:a", "aac",          # 音訊編碼
-        "-b:a", "128k",          # 音訊 bitrate
-        output_path
-    ]
-
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return output_path
-
 # ========== 攝影機串流核心（cctv）==========
 def get_current_model():
     """根據燈光狀態選擇模型：燈亮=夜間模型，燈暗=白天模型"""
@@ -384,7 +384,7 @@ def get_current_model():
 
             if is_light_on == expected_state:
                 light_cache['checking'] = False
-                print(f"🎉 [Model] 燈光已達到預期狀態 ({'亮' if expected_state else '暗'})，鎖定 {current_period} 時段，停止後續 API 請求。")
+                print(f"[Model] 燈光已達到預期狀態 ({'亮' if expected_state else '暗'})，鎖定 {current_period} 時段，停止後續 API 請求。")
 
         except Exception as e:
             print(f"[Model] 燈光狀態檢查失敗: {e}")
@@ -723,6 +723,164 @@ def api_detect():
 def video(filename):
     return send_from_directory(f"{RESULT_FOLDER}", filename)
 
+# ========== 路由：即時串流／資料 API（cctv）==========
+@app.route("/api/data")
+def api_data():
+    return jsonify(latest_data)
+
+@app.route('/video_feed/<camera_id>')
+def video_feed(camera_id):
+    """
+    動態路由：根據 URL 的 camera_id 決定回傳哪個串流
+    例如: /video_feed/cam1 或 /video_feed/cam2
+    """
+    if camera_id not in streams:
+        return "Camera not found", 404
+
+    return Response(generate_frames(camera_id),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+# ========== 路由：PTZ 控制 API（cctv）==========
+@app.route('/api/get_zoom/<camera_id>', methods=['GET'])
+def get_zoom(camera_id):
+    if camera_id not in PTZ_CONFIG:
+        return jsonify({'error': '找不到攝影機'}), 404
+    config = PTZ_CONFIG[camera_id]
+
+    params = {'query': 'position', 'camera': 1}
+
+    try:
+        response = requests.get(
+            config['url'],
+            params=params,
+            auth=config['auth'],
+            verify=False,
+            timeout=5
+        )
+
+        zoom_value = None
+        for line in response.text.splitlines():
+            if line.startswith('zoom='):
+                zoom_value = line.split('=')[1]
+                break
+
+        if zoom_value:
+            return jsonify({'status': 'success', 'zoom': zoom_value})
+        else:
+            return jsonify({'error': '找不到 Zoom 數值'}), 500
+
+    except Exception as e:
+        print(f"[PTZ] get_zoom 失敗 [{camera_id}]: {e}")
+        return jsonify({'error': '無法連接到攝影機'}), 500
+
+@app.route('/api/zoom/<camera_id>', methods=['POST'])
+def zoom(camera_id):
+    if camera_id not in PTZ_CONFIG:
+        return jsonify({'error': '找不到攝影機'}), 404
+    config = PTZ_CONFIG[camera_id]
+
+    data = request.get_json()
+    zoom_value = data.get('zoom')
+    params = {'zoom': zoom_value, 'camera': 1}
+
+    try:
+        requests.post(
+            config['url'],
+            data=params,
+            auth=config['auth'],
+            verify=False,
+            timeout=5
+        )
+        return jsonify({'status': 'success', 'zoom': zoom_value})
+    except Exception as e:
+        print(f"[PTZ] zoom 失敗 [{camera_id}]: {e}")
+        return jsonify({'error': '無法連接到攝影機'}), 500
+
+@app.route('/api/direction/<camera_id>', methods=['POST'])
+def direction(camera_id):
+    if camera_id not in PTZ_CONFIG:
+        return jsonify({'error': '找不到攝影機'}), 404
+    config = PTZ_CONFIG[camera_id]
+
+    # 獲取方向
+    data = request.get_json()
+    direction = data.get('direction')
+
+    # 根據方向決定參數
+    params = {'camera': 1}
+    if direction == 'up':
+        params['tilt'] = 30
+    elif direction == 'down':
+        params['tilt'] = -30
+    elif direction == 'left':
+        params['pan'] = -45
+    elif direction == 'right':
+        params['pan'] = 45
+
+    try:
+        requests.post(
+            config['url'],
+            data=params,
+            auth=config['auth'],
+            verify=False,
+            timeout=5
+        )
+        return jsonify({'status': 'success', 'direction': direction})
+    except Exception as e:
+        print(f"[PTZ] direction 失敗 [{camera_id}]: {e}")
+        return jsonify({'error': '無法連接到攝影機'}), 500
+
+# ========== 路由：統計與下載 API（cctv）==========
+@app.route('/api/daily_stats')
+def get_daily_stats():
+    """
+    API: 根據請求的日期，回傳該日 0~23 點的每小時最大鳥類數量。
+    參數: date (格式 YYYY-MM-DD)，若無參數則預設為今天。
+    """
+    # 取得前端傳來的日期參數，如果沒傳就用今天
+    query_date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
+
+    try:
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            # 查詢該日期的所有紀錄
+            cursor.execute('SELECT hour, max_count FROM hourly_max WHERE date = ?', (query_date,))
+            rows = cursor.fetchall()
+
+            # 初始化一個長度為 24 的陣列，預設值為 0
+            # index 0 代表 00:00, index 23 代表 23:00
+            hourly_data = [0] * 24
+
+            # 將資料庫查到的數據填入對應的小時
+            for hour, count in rows:
+                if 0 <= hour < 24:
+                    hourly_data[hour] = count
+
+            return jsonify({
+                'date': query_date,
+                'data': hourly_data
+            })
+
+    except Exception as e:
+        print(f"API Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/download_csv')
+def download_csv():
+    file_path = 'cctv_database.csv'
+
+    if os.path.exists(file_path):
+        # as_attachment=True 會強制瀏覽器下載而不是直接打開
+        # download_name 可以自訂使用者下載後看到的名字
+        return send_file(
+            file_path,
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=f"Biological statistics.csv"
+        )
+    else:
+        return "檔案還沒生成，請稍候再試", 404
+
 # ========== 路由：全景 API（panorama）==========
 @app.route("/api/panorama", methods=["POST"])
 def api_panorama():
@@ -919,168 +1077,5 @@ def api_audio():
 
     except Exception as e:
         plt.close('all')
-        print(f"❌ 錯誤: {e}")
+        print(f"錯誤: {e}")
         return jsonify({"type": "error", "message": str(e)}), 500
-
-# ========== 路由：即時串流／資料 API（cctv）==========
-@app.route("/api/data")
-def api_data():
-    return jsonify(latest_data)
-
-@app.route('/video_feed/<camera_id>')
-def video_feed(camera_id):
-    """
-    動態路由：根據 URL 的 camera_id 決定回傳哪個串流
-    例如: /video_feed/cam1 或 /video_feed/cam2
-    """
-    if camera_id not in streams:
-        return "Camera not found", 404
-
-    return Response(generate_frames(camera_id),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
-
-# ========== 路由：PTZ 控制 API（cctv）==========
-@app.route('/api/get_zoom/<camera_id>', methods=['GET'])
-def get_zoom(camera_id):
-    if camera_id not in PTZ_CONFIG:
-        return jsonify({'error': '找不到攝影機'}), 404
-    config = PTZ_CONFIG[camera_id]
-
-    # 讀取狀態需使用 query=position
-    params = {'query': 'position', 'camera': 1}
-
-    try:
-        # 發送 GET 請求到攝影機
-        response = requests.get(
-            config['url'],
-            params=params,
-            auth=config['auth'],
-            verify=False,
-            timeout=5
-        )
-
-        # 解析回傳的文字資料 (尋找 zoom=...)
-        zoom_value = None
-        for line in response.text.splitlines():
-            if line.startswith('zoom='):
-                zoom_value = line.split('=')[1]
-                break
-
-        # 根據解析結果回傳 JSON
-        if zoom_value:
-            return jsonify({'status': 'success', 'zoom': zoom_value})
-        else:
-            return jsonify({'error': '找不到 Zoom 數值'}), 500
-
-    except Exception as e:
-        print(f"[PTZ] get_zoom 失敗 [{camera_id}]: {e}")
-        return jsonify({'error': '無法連接到攝影機'}), 500
-
-@app.route('/api/zoom/<camera_id>', methods=['POST'])
-def zoom(camera_id):
-    if camera_id not in PTZ_CONFIG:
-        return jsonify({'error': '找不到攝影機'}), 404
-    config = PTZ_CONFIG[camera_id]
-
-    # 獲取前端發送的 JSON 數據
-    data = request.get_json()
-    zoom_value = data.get('zoom')
-    params = {'zoom': zoom_value, 'camera': 1}
-
-    try:
-        requests.post(
-            config['url'],
-            data=params,
-            auth=config['auth'],
-            verify=False,
-            timeout=5
-        )
-        return jsonify({'status': 'success', 'zoom': zoom_value})
-    except Exception as e:
-        print(f"[PTZ] zoom 失敗 [{camera_id}]: {e}")
-        return jsonify({'error': '無法連接到攝影機'}), 500
-
-@app.route('/api/direction/<camera_id>', methods=['POST'])
-def direction(camera_id):
-    if camera_id not in PTZ_CONFIG:
-        return jsonify({'error': '找不到攝影機'}), 404
-    config = PTZ_CONFIG[camera_id]
-
-    # 獲取方向
-    data = request.get_json()
-    direction = data.get('direction')
-
-    # 根據方向決定參數
-    params = {'camera': 1}
-    if direction == 'up':
-        params['tilt'] = 30
-    elif direction == 'down':
-        params['tilt'] = -30
-    elif direction == 'left':
-        params['pan'] = -45
-    elif direction == 'right':
-        params['pan'] = 45
-
-    try:
-        requests.post(
-            config['url'],
-            data=params,
-            auth=config['auth'],
-            verify=False,
-            timeout=5
-        )
-        return jsonify({'status': 'success', 'direction': direction})
-    except Exception as e:
-        print(f"[PTZ] direction 失敗 [{camera_id}]: {e}")
-        return jsonify({'error': '無法連接到攝影機'}), 500
-
-# ========== 路由：統計與下載 API（cctv）==========
-@app.route('/api/daily_stats')
-def get_daily_stats():
-    """
-    API: 根據請求的日期，回傳該日 0~23 點的每小時最大鳥類數量。
-    參數: date (格式 YYYY-MM-DD)，若無參數則預設為今天。
-    """
-    # 取得前端傳來的日期參數，如果沒傳就用今天
-    query_date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
-
-    try:
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            # 查詢該日期的所有紀錄
-            cursor.execute('SELECT hour, max_count FROM hourly_max WHERE date = ?', (query_date,))
-            rows = cursor.fetchall()
-
-            # 初始化一個長度為 24 的陣列，預設值為 0
-            # index 0 代表 00:00, index 23 代表 23:00
-            hourly_data = [0] * 24
-
-            # 將資料庫查到的數據填入對應的小時
-            for hour, count in rows:
-                if 0 <= hour < 24:
-                    hourly_data[hour] = count
-
-            return jsonify({
-                'date': query_date,
-                'data': hourly_data
-            })
-
-    except Exception as e:
-        print(f"API Error: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/download_csv')
-def download_csv():
-    file_path = 'cctv_database.csv'
-
-    if os.path.exists(file_path):
-        # as_attachment=True 會強制瀏覽器下載而不是直接打開
-        # download_name 可以自訂使用者下載後看到的名字
-        return send_file(
-            file_path,
-            mimetype='text/csv',
-            as_attachment=True,
-            download_name=f"Biological statistics.csv"
-        )
-    else:
-        return "檔案還沒生成，請稍候再試", 404
