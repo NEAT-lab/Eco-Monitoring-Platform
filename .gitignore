@@ -1,8 +1,7 @@
 *.pt
 .env
-uploads/
-results/
 __pycache__/
+detection_io/
 temporary.py
 .DS_Store
 env/

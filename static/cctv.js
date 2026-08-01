@@ -1,35 +1,20 @@
-async function updateData() {
-    const res = await fetch("/api/data");
-    const data = await res.json();
-
-    temp.innerText = data.temperature ?? "--";
-    hum.innerText = data.humidity ?? "--";
-    time.innerText = data.timestamp ?? "--";
-}
-
+// ========== 即時串流初始化 ==========
 document.getElementById("rtsp_test").src = "/video_feed/cam1?t=" + Date.now();
 document.getElementById("rtsp_test_2").src = "/video_feed/cam2?t=" + Date.now();
 
-fetch('/api/get_zoom/cam1')
-  .then(res => res.json())
-  .then(data => {
-      document.getElementById('zoomDisplay').innerText = data.zoom;
-      document.getElementById('zoomSlider').value = data.zoom;
-  });
-
-fetch('/api/get_zoom/cam2')
-  .then(res => res.json())
-  .then(data => {
-      document.getElementById('zoomDisplay_2').innerText = data.zoom;
-      document.getElementById('zoomSlider_2').value = data.zoom;
-  });
-
-// ========== 左攝影機控制 ==========
+// ========== 左攝影機（cam1）控制 ==========
 const zoomSlider = document.getElementById('zoomSlider');
 const zoomDisplay = document.getElementById('zoomDisplay');
 const zoomStatus = document.getElementById('zoomStatus');
 
 let debounceTimer;
+
+fetch('/api/get_zoom/cam1')
+  .then(res => res.json())
+  .then(data => {
+      zoomDisplay.innerText = data.zoom;
+      zoomSlider.value = data.zoom;
+  });
 
 zoomSlider.addEventListener('input', (e) => {
     const zoomValue = parseInt(e.target.value);
@@ -63,9 +48,53 @@ async function sendZoomCommand(zoomValue) {
     }
 }
 
+// ========== 右攝影機（cam2）控制 ==========
+const zoomSlider_2 = document.getElementById('zoomSlider_2');
+const zoomDisplay_2 = document.getElementById('zoomDisplay_2');
+const zoomStatus_2 = document.getElementById('zoomStatus_2');
 
-// ========== 右攝影機控制 ==========
-// ==== 右攝影機方向控制 ====
+let debounceTimer_2;
+
+fetch('/api/get_zoom/cam2')
+  .then(res => res.json())
+  .then(data => {
+      zoomDisplay_2.innerText = data.zoom;
+      zoomSlider_2.value = data.zoom;
+  });
+
+zoomSlider_2.addEventListener('input', (e) => {
+    const zoomValue_2 = parseInt(e.target.value);
+    zoomDisplay_2.textContent = zoomValue_2;
+
+    clearTimeout(debounceTimer_2);
+    debounceTimer_2 = setTimeout(() => {
+        sendZoomCommand_2(zoomValue_2);
+    }, 1000);
+});
+
+async function sendZoomCommand_2(zoomValue) {
+    try {
+        zoomStatus_2.textContent = '發送中...';
+
+        const response = await fetch('/api/zoom/cam2', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ zoom: zoomValue })
+        });
+
+        if (response.ok) {
+            zoomStatus_2.textContent = '成功';
+        } else {
+            zoomStatus_2.textContent = '錯誤';
+        }
+    } catch (error) {
+        zoomStatus_2.textContent = '錯誤: ' + error.message;
+    }
+}
+
+// 右攝影機方向控制（尚未啟用）
 const directionBtns = {
     up: document.getElementById('upBtn'),
     down: document.getElementById('downBtn'),
@@ -101,45 +130,7 @@ const directionStatus = document.getElementById('directionStatus');
 //     }
 // }
 
-// ==== 右攝影機變焦控制 ====
-const zoomSlider_2 = document.getElementById('zoomSlider_2');
-const zoomDisplay_2 = document.getElementById('zoomDisplay_2');
-const zoomStatus_2 = document.getElementById('zoomStatus_2');
-
-let debounceTimer_2;
-
-zoomSlider_2.addEventListener('input', (e) => {
-    const zoomValue_2 = parseInt(e.target.value);
-    zoomDisplay_2.textContent = zoomValue_2;
-
-    clearTimeout(debounceTimer_2);
-    debounceTimer_2 = setTimeout(() => {
-        sendZoomCommand_2(zoomValue_2);
-    }, 1000);
-});
-
-async function sendZoomCommand_2(zoomValue) {
-    try {
-        zoomStatus_2.textContent = '發送中...';
-
-        const response = await fetch('/api/zoom/cam2', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ zoom: zoomValue })
-        });
-
-        if (response.ok) {
-            zoomStatus_2.textContent = '成功';
-        } else {
-            zoomStatus_2.textContent = '錯誤';
-        }
-    } catch (error) {
-        zoomStatus_2.textContent = '錯誤: ' + error.message;
-    }
-}
-
+// ========== 每日統計圖表 ==========
 document.addEventListener("DOMContentLoaded", function () {
     // 1. 初始化變數與 DOM 元素
     const ctx = document.getElementById('birdChart').getContext('2d');
@@ -162,7 +153,7 @@ document.addEventListener("DOMContentLoaded", function () {
     let lastDateStr = "";
 
     // 用來標記使用者是否正在手動查看某張圖
-    let isManualSelection = false; 
+    let isManualSelection = false;
 
     // 格式化日期為 YYYY-MM-DD
     function formatDate(date) {
@@ -326,7 +317,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (e.target.value) {
             currentDate = new Date(e.target.value);
             lastDateStr = "";
-            isManualSelection = false;  
+            isManualSelection = false;
             fetchDailyData();
         }
     });
@@ -343,6 +334,16 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }, 10000);
 });
+
+// ========== 感測器資料更新 ==========
+async function updateData() {
+    const res = await fetch("/api/data");
+    const data = await res.json();
+
+    temp.innerText = data.temperature ?? "--";
+    hum.innerText = data.humidity ?? "--";
+    time.innerText = data.timestamp ?? "--";
+}
 
 setInterval(updateData, 60000);
 updateData();
