@@ -699,7 +699,9 @@ def api_detect():
         new_filename = f"{basename}.avi"
 
         # YOLO 偵測（可直接用model.predict也行）
-        model.predict(input_path, save=True, project=RESULT_FOLDER, name="./", exist_ok=True)
+        # project 必須是絕對路徑，否則 Ultralytics 會自動把它接到全域 runs_dir 底下
+        # （例如變成 <runs_dir>/detect/detection_io/results），導致後面找不到輸出影片
+        model.predict(input_path, save=True, project=os.path.abspath(RESULT_FOLDER), name="./", exist_ok=True)
 
         #  取得 YOLO 存出的影片位置
         processed_video = f"{RESULT_FOLDER}/{new_filename}"
